@@ -1,0 +1,63 @@
+{% extends "base.html" %}{% block body %}
+<div class="flex items-center justify-between mb-4">
+  <h1 class="text-xl font-semibold">数据看板</h1>
+  <div class="flex gap-1 text-sm">
+    {% for k, label in [('today','今日'),('7d','近7天'),('30d','近30天')] %}
+    <a href="/admin?range={{k}}" class="px-3 py-1 rounded {{ 'bg-teal-600 text-white' if range==k else 'bg-white text-slate-600' }}">{{label}}</a>
+    {% endfor %}
+  </div>
+</div>
+
+{% macro card(label, value, sub='') %}
+<div class="bg-white rounded-xl p-4 shadow-sm">
+  <div class="text-slate-400 text-sm">{{label}}</div>
+  <div class="text-2xl font-bold text-slate-700">{{value}}</div>
+  {% if sub %}<div class="text-xs text-slate-400">{{sub}}</div>{% endif %}
+</div>
+{% endmacro %}
+
+<div class="space-y-5">
+  <div><div class="text-sm text-slate-500 mb-2">① 源头漏斗</div><div class="grid grid-cols-3 gap-3">
+    {{ card('新增接待人数', m.new_contacts) }}{{ card('有效对话数', m.effective_convs) }}{{ card('AI 自动接待率', m.auto_rate ~ '%') }}
+  </div></div>
+  <div><div class="text-sm text-slate-500 mb-2">② 转化效率</div><div class="grid grid-cols-4 gap-3">
+    {{ card('转化数', m.conversions) }}{{ card('转化率', m.conversion_rate ~ '%') }}{{ card('成交总额', '¥' ~ '%.2f'|format(m.gmv_yuan)) }}{{ card('客单价', '¥' ~ '%.2f'|format(m.aov_yuan)) }}
+  </div></div>
+  <div class="grid grid-cols-2 gap-5">
+    <div><div class="text-sm text-slate-500 mb-2">③ 服务成本</div><div class="grid grid-cols-1 gap-3">
+      {{ card('平均接待时长', m.avg_handle_min ~ ' 分钟') }}</div></div>
+    <div><div class="text-sm text-slate-500 mb-2">⑤ 响应速度</div><div class="grid grid-cols-1 gap-3">
+      {{ card('平均首次响应', m.avg_first_resp_sec ~ ' 秒') }}</div></div>
+  </div>
+  <div><div class="text-sm text-slate-500 mb-2">⑥ 流失分析</div><div class="grid grid-cols-2 gap-3">
+    {{ card('未转化流失数', m.churned) }}{{ card('流失率', m.churn_rate ~ '%') }}
+  </div></div>
+  <div><div class="text-sm text-slate-500 mb-2">⑦ 跟进激活</div><div class="grid grid-cols-2 gap-3">
+    {{ card('跟进激活数', m.reactivation_count) }}{{ card('跟进激活成交额', '¥' ~ '%.2f'|format(m.reactivation_gmv_yuan)) }}
+  </div></div>
+  <div><div class="text-sm text-slate-500 mb-2">④ 渠道来源</div>
+    <div class="bg-white rounded-xl p-4 shadow-sm">
+      <table class="w-full text-sm"><thead><tr class="text-slate-400 text-left">
+        <th class="py-1">渠道</th><th>对话数</th><th>转化数</th><th>成交额</th></tr></thead>
+        <tbody>
+        {% for c in m.channels %}<tr class="border-t"><td class="py-1">{{c.channel}}</td><td>{{c.convs}}</td><td>{{c.conversions}}</td><td>¥{{ '%.2f'|format(c.gmv_yuan) }}</td></tr>{% endfor %}
+        {% if not m.channels %}<tr><td colspan="4" class="py-2 text-slate-400">本时段暂无数据</td></tr>{% endif %}
+        </tbody></table>
+    </div></div>
+  <div class="bg-white rounded-xl p-5 shadow-sm">
+    <div class="font-medium mb-4">近 7 天趋势（接待人数 / 转化数 / 成交额）</div>
+    {% set maxv = (trend | map(attribute='contacts') | list + trend | map(attribute='conversions') | list + [1]) | max %}
+    <div class="flex items-end gap-4 h-40">
+      {% for d in trend %}
+      <div class="flex-1 flex flex-col items-center gap-1">
+        <div class="flex items-end gap-1 h-32 w-full justify-center" title="{{d.date}} 接待{{d.contacts}}/转化{{d.conversions}}/成交¥{{ '%.2f'|format(d.gmv_yuan) }}">
+          <div class="w-2.5 rounded-t" style="height:{{ (d.contacts/maxv*100)|round }}%;background:#2a78d6"></div>
+          <div class="w-2.5 rounded-t" style="height:{{ (d.conversions/maxv*100)|round }}%;background:#1baf7a"></div>
+        </div>
+        <div class="text-xs text-slate-400">{{d.date}}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endblock %}

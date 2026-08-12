@@ -1,0 +1,423 @@
+# 企业微信自研 hook —— 版本→内存偏移清单
+#
+# 路径 B 的最大长期维护成本集中在此：企微强绑定版本，升级即需重找偏移。
+# 【骨架里程碑不使用任何 offset】——本文件此刻只确立结构。后续逆向阶段逐项填入。
+#
+# 复核偏移前务必先核对：装机后用 objdump/dumpbin 确认 WXWork.exe 位数与本文件 arch 一致。
+
+target: 企业微信 (WXWork / WeCom)
+version: "5.0.3.6005"
+arch: x86                 # 32 位 —— 2026-07-25 装机后 objdump -f 复核确认 pei-i386（WXWork.exe 主进程 Wow64）
+module: WXWork.exe
+# 目标模块整文件 SHA-256（版本权威：官方 CDN 装的 WXWork.exe，防同版本号不同二进制/被替换）。
+module_sha256: "3824da5b7038bd71e7a161a954db30c9808a2e3f7cb596fc5620c739e31d127a"
+verified: false           # 版本/位数/sha256 已核；但【消息收发偏移】尚未逆向，故 has_message_offsets 仍 False
+
+# 优先用特征码(AOB)定位而非裸 RVA —— 抗小版本/重定位漂移，减轻升级维护。
+#
+# ── WIP（2026-07-26 Ghidra 完整分析 静态逆向；AOB 唯一性已校验，但字段偏移/
+#        收发语义未经真机动态确认 → verified:false，勿激活）─────────────────
+# AOB 生成方法：Ghidra headless 完整分析(1.28M 函数)后，对函数入口取前 32 字节，
+#   用 PE 重定位表把每个会随 ASLR 漂移的 dword 通配为 ??，再全 .text 扫描确认唯一性
+#   (matches==1)。故这些 AOB 在【运行时重定位后的镜像】里同样能匹配。
+#   工具：D:\re-tools\ghidra-scripts\{DecompileContaining,MapLogStrings,MakeAOB,...}.java
+#   全文：docs/wecom-ghidra-session-2026-07-26.md
+signatures:
+  # ★★ 收 · 读取消息 hook 点 —— 2026-07-26【真机 inline hook 实测捕获成功】★★
+  # FUN_01b9f7e1 = FTS 索引记录处理器(消息收到后近实时索引时被调,thiscall)。
+  # 在此 inline hook,遍历记录即可拿到每条消息的明文字段。已注入活企微 hook 到、
+  # 捕获真实入站消息("ZZFINAL")、干净摘钩、企微存活——全流程验证通过。
+  # 调用约定/遍历:ECX=this；arr=*this；start=arr[0]；end=arr[1]；
+  #   每条 record=*(uint*)p，p 从 start 到 end 步长 8。
+  # 记录字段(record 相对偏移，MSVC std::string 布局 buf@off/size@off+0x10/cap@off+0x14):
+  #   +0x08 = 文本正文 (std::string)   ← 实测 "ZZFINAL\n"
+  #   +0x50 = 发件人 userid (std::string) ← 实测 "7881303268160321"(=对方=客户)
+  #   +0x68 = 类型串(实测 "60")；+0x80/+0x90 = 更多串(会话/msgid)
+  #   会话 id 可由 sender 推出:1:1 = "sAS:<自己uid>_<sender_uid>"
+  # hook 装载:偷 7 字节(6A 78 push + B8 imm32 mov,均位置无关)；装前只读校验
+  #   目标处 6A 78 B8 ?? ?? ?? ?? E8(exact-RVA,非全局唯一 AOB→生产用 RVA+序言校验)。
+  # 过滤:sender==自己 uid 即为发出消息,丢弃(只留入站)。
+  recv_read_hook:
+    func: FUN_01b9f7e1
+    rva: 0x0179F7E1
+    module: WXWork.exe
+    calling_conv: thiscall
+    hook_stolen_len: 7
+    prologue_verify: "6A 78 B8 ?? ?? ?? ?? E8"
+    record_fields:
+      text:          { off: 0x08, type: std_string }
+      sender_userid: { off: 0x50, type: std_string }
+      subtype:       { off: 0x68, type: std_string }
+    conversation_id_formula: "sAS:<self_uid>_<sender_userid>   # 1:1"
+    verified: true       # 2026-07-26 真机 inline hook 捕获实测通过
+    verified_note: "注入 wecom_capture.dll → ih_install 7B → 捕获真实入站消息字段 → ih_remove 干净摘钩 → 企微存活"
+
+  # 发送 · UI compose 处理函数（读输入框 CDuiString::GetData 后解析/派发）。
+  # thiscall，[this+0xB4]=输入控件对象，GetText=vtable+0x48。这是 UI 侧发送处理，
+  # 不是可编程 Send(conv,text)——发送路径深层是 PostSendMessageTask2（见下）。
+  send_ui_handler:
+    aob: "68 AC 00 00 00 B8 ?? ?? ?? ?? E8 ?? ?? ?? ?? 8B D9 8B 8B B4 00 00 00 33 D2 89 4D A0 85 C9 75 07"
+    rva: 0x03330E2A
+    module: WXWork.exe
+    calling_conv: thiscall
+    unique_in_text: true
+    verified: false
+
+  # 收 · SyncAppMsgsTask::FetchFinish —— 消息同步 CGI 返回后处理入站消息【批次】。
+  # param_1=task(this via ecx 也用)，param_2=同步响应；msglist_size=*(param_2+0x14)，
+  # msg 数组=*(param_2+0x1c)，循环对每条调 recv_webmsg_parser。是稳定的收侧总入口。
+  recv_fetchfinish:
+    aob: "68 6C 01 00 00 B8 ?? ?? ?? ?? E8 ?? ?? ?? ?? 8B D9 8B 7D 08 8B 75 0C 89 75 EC 68 ?? ?? ?? ?? 80"
+    rva: 0x050E06A0
+    module: WXWork.exe
+    calling_conv: thiscall
+    unique_in_text: true
+    verified: false
+
+  # 收 · CRTX::WebMsg 解析构造器（per-message）。入口 EH_prolog3 通用序言 → 32B AOB
+  # 不唯一(80 处)，需用 recv_fetchfinish 当锚点经 CALL 到达，或延长签名。此处只记 RVA。
+  recv_webmsg_parser:
+    rva: 0x0140BE3B
+    module: WXWork.exe
+    calling_conv: thiscall
+    unique_in_text: false           # 32B 不唯一；勿单独用 AOB 定位
+    verified: false
+
+  # 发 · 机制摸清（2026-07-26 真机动态捕获，尚未实装发送）：
+  # send_ui_handler(FUN_03730e2a) 与其后的 FUN_037a17dc(RVA 0x33A17DC, thiscall) =
+  # 「读输入框→构造→发送」，与输入框强耦合。UI compose 触发链:
+  #   FUN_037a178e(RVA 0x33A178E,回车处理)→FUN_03730e2a(处理@)→FUN_037a17dc(发送)。
+  # 聊天视图 this 布局:this+0x90 = 当前会话 id 字符串(发送层前缀 "S:<自uid>_<对方uid>"，
+  #   注意与收侧 FTS 的 "sAS:" 前缀不同)；this+0xB4 = 输入控件(DuiLib CRichEditUI，
+  #   GetText=vtable+0x48)。实测「孤星少将」uid=7881303268160321,
+  #   会话 id="S:1688856447584453_7881303268160321"，自己 uid=1688856447584453。
+  # 落地发送(待实装)=进程内:CRichEditUI::SetText(this+0xB4,文本)+触发 FUN_037a17dc(this)；
+  #   缺 SetText vtable 槽位(需分析 DuiLib.dll)。programmatic 深层 SendMessageManager/
+  #   PostSendMessageTask2 已确认不现实。self_uid=1688856447584453 供收侧过滤出站。
+  send_ui_compose:
+    ui_send_trigger:   { rva: 0x033A178E }   # 回车发送处理(thiscall this=聊天视图)
+    ui_send_transmit:  { rva: 0x033A17DC }   # 读输入框构造+发送
+    chatview_conv_off: 0x90                   # this+0x90 = 会话id "S:自_对方"(std::string,>15字符→堆指针; _Mysize@+0xA0)
+    chatview_input_off: 0xB4                  # this+0xB4 = 输入控件(运行时 vtable 在 WXWork,子类化)
+    chatview_flag_offs: [0x750, 0x758, 0x770] # 活动聊天视图时非空(FUN_037a17dc 前置读)
+    self_uid: "1688856447584453"
+    verified: true                            # 2026-07-26 真机程序化发送成功(见 send_LANDED)
+
+  # ★★★ 发 · 程序化发送【真机打通】2026-07-26 ★★★ —— 给孤星少将发消息成功、企微存活。
+  # 工具: native/wecom_hook/send_actuator_dll.c (编译=wsend.dll)。
+  # 落地链(每步真机验证):
+  #   1) 注入 wsend.dll → 进程内 HTTP 控制面(127.0.0.1)。
+  #   2) 拿聊天视图 this: inline hook FUN_03730e2a(RVA 0x3330E2A, 偷5字节 68 AC 00 00 00,
+  #      ECX=聊天视图)。用户在目标会话按一次回车即捕获 ECX。校验 +0x90 会话串==目标。
+  #      ⚠️纯内存扫描定位 this 【不可行】:输入控件运行时 vtable 是 WXWork 子类 vtable(实测
+  #        0x073xxxxx,在 WXWork 镜像内),≠ DuiLib 导出 vtable(0x509c5cf4/0x509e93c8);
+  #        导出 vtable 值在企微堆里根本不出现 → 按导出 vtable 扫不到,按对象 vtable 槽 19 取
+  #        SetText 会取到乱函数(0x061f0030)直接崩。故【必须 hook 捕获 this】。
+  #   3) SetText 塞文本: 直调 DuiLib 导出 ?SetText@CRichEditUI@DuiLib@@UAEXPB_W@Z 的【实现地址】
+  #      (GetProcAddress, ≈0x507b7120), thiscall(ecx=input, arg=const wchar_t*)。
+  #      【不要】走对象自己 vtable 的槽位(子类 vtable 槽 18/19 是 WXWork 的 override,取错=崩)。
+  #      UTF-8→UTF-16 用 MultiByteToWideChar(CP_UTF8)。
+  #   4) 触发发送 = 【合成回车】: PostMessageW(WeWorkWindow, WM_KEYDOWN/WM_KEYUP, VK_RETURN)。
+  #      企微跑它自然的回车→发送流程(会再次调 FUN_03730e2a=捕获钩再触发一次)→发出、输入框清空。
+  #   跨线程: SetText 须在企微 UI 线程执行 → SetWindowsHookEx(WH_GETMESSAGE, uiTid) 把动作
+  #      marshal 到 UI 线程(实测 ran_on_tid==uiTid)。PostMessage 回车任意线程可发。
+  # 【实测无效/危险的直调路】(勿再走):
+  #   - 直调 FUN_037a178e(this): 不崩但返回 0 不发 —— 程序化缺真实键盘/IME 前置(this+0x9bc/
+  #     FUN_03781064/FUN_03730e2a 三条件之一不满足)。
+  #   - 直调 FUN_037a17dc(this): 【崩】—— 依赖 FUN_03730e2a 先跑铺垫状态,跳过即崩。
+  #   - 盲构造 Message + 调 Send(路①): 未实现 —— content子对象/会话/类型完整布局未逆全,极难。
+  send_LANDED:
+    method: "SetText(input, wtext) + synthetic Enter(PostMessage VK_RETURN to WeWorkWindow)"
+    capture_this_hook: { rva: 0x3330E2A, stolen: 5, aob_head: "68 AC 00 00 00 B8", ecx: chatview }
+    settext_export: "?SetText@CRichEditUI@DuiLib@@UAEXPB_W@Z"   # 直调导出实现,勿走对象 vtable 槽
+    gettext_export: "?GetText@CRichEditUI@DuiLib@@UBE?AVCDuiString@2@XZ"  # vtable+0x48=slot18(导出布局)
+    ui_thread_marshal: "SetWindowsHookEx(WH_GETMESSAGE, uiTid)"
+    window_class: "WeWorkWindow"
+    target_example: { peer_uid: "7881303268160321", conv: "S:1688856447584453_7881303268160321" }
+    verified: true
+    verified_note: "2026-07-26 给孤星少将真机程序化发送成功,消息入聊天记录,输入框清空,企微存活"
+
+  # 发 · 无痕发送研究（2026-07-26 真机动态捕获 Message 结构；未实装，勿激活）：
+  # 唯一发送入口(除UI)=wework::ui::InstantMessaging::Send = FUN_037a5638(RVA 0x33A5638,
+  #   thiscall this=InstantMessaging, [esp+4]=&std::vector<std::shared_ptr<wework::model::Message>>)。
+  #   仅被 FUN_037a17dc(UI compose)调用 → 这一层没有独立"干净 SendText(会话,文本)"。
+  # vector 布局: *(&vec)=begin, *(&vec+4)=end, 元素 8B=shared_ptr{Message*, ctrl*}。
+  # Message 对象(wework::model::Message)实测:顶层大部分空(一堆空 std::string，cap=0x0f)，
+  #   **文本不在顶层**——在 Message+0x1B4 指向的 content 子对象里(实测 msgcap123 在该子对象 +~0x2c)。
+  #   即 Message 是深度嵌套(content/会话/类型分散在嵌套结构+指针字段)。
+  # ⇒ 无痕发送两条路(都需进程内 CALL 企微函数,首次写执行企微逻辑,崩险高):
+  #   路①构造 Message: 进程内 new 出嵌套 Message(content子对象+会话+类型全填对)+调 Send。极难。
+  #   路②GetText注入+触发(更可行): hook 输入控件 GetText(vtable+0x48)让其返回目标文本 →
+  #     用目标会话的聊天视图 this 调 send_ui_compose.ui_send_trigger(FUN_037a178e) 触发发送 →
+  #     输入框不动=无痕。需:活的聊天视图 this(会话须已加载)+构造 CDuiString+调企微函数。
+  # 下一步(离机静态)=抠死 路②的 GetText hook 点/CDuiString 构造/触发时序,压真机试错次数。
+  send_message_model:
+    im_send_func:      { rva: 0x033A5638, note: "InstantMessaging::Send(this, vector<shared_ptr<Message>>)" }
+    im_send_caller:    { rva: 0x033A17DC, note: "唯一调用者=UI compose" }
+    vector_elem_size:  8            # shared_ptr<Message>
+    msg_text_content_ptr_off: 0x1B4  # Message+0x1B4 → content 子对象(文本在其 +~0x2c)
+    verified: false
+    impl_paths: ["构造Message(极难)", "GetText注入+触发FUN_037a178e(可行,首选)"]
+
+  # ★★★ 发 · HEADLESS 数据层发送【栈已完整摸清 2026-07-26,未实装】★★★
+  # 需求:自动客服要给任意客户后台回复,不能靠前台聚焦聊天窗(UI SetText+回车只能发当前打开会话)。
+  # 真机动态捕获(svc_probe hook FUN_0581b090,用户发真消息,企微存活)确认数据层发送链:
+  #   MessageServiceImpl::SendMessageToConversationUsingProgressManager(FUN_0581b090,RVA 0x541b090)
+  #     thiscall this=MessageServiceImpl服务单例, [ret_struct][&shared_ptr<SendMessageInfo>][&callback]
+  #   → SendMessageManager::PreSendNewMessage(FUN_057f09e8,RVA 0x53F09E8,"DispatchPostSendMessageTask")
+  #   → PostSendMessageTask2::SendMessage(FUN_01fe028d,RVA 0x1BE028D,build request_package->out_contact)
+  #   → PostSendMessageTask2::DoExecute(FUN_01fd4be0,RVA 0x1BD4BE0,E2E加密/上传/ilink,"conversationId=")
+  # ★关键:UI 发送【确实走】SendMessageToConversation(hook 命中),故这是所有文本发送的数据层汇聚点。
+  # SendMessageInfo 布局(真机 dump 解码):
+  #   +0x00 std::string 会话id = "S:<自uid>_<对方uid>"(收件人!明文,+0x10=_Mysize=35,+0x14=_Myres)
+  #   +0x18 int 类型 = 2(文本)
+  #   +0x1c/+0x20 指针 → 消息包子对象(内含会话明文串@sub+0x28 + 内容protobuf,深度嵌套/arena分配)
+  #   +0x40 std::string 本地msgid(如"1785074301899",13位,SSO)
+  #   +0x60 uint64(时间戳/序号)
+  #   内容文本 = 简单 protobuf std::string,格式 `0a<L1> 08 00 12<L2> 0a<TL> <utf8text>`
+  #     (TL=文本字节数, L2=TL+2, L1=L2+2;实测"ZZTEXT99"→0a 0e 08 00 12 0a 0a 08 <8B>;与UI层Message+0x1B4同格式)
+  # ★服务单例 this 稳定 = 实测 0x1f4752c8(vtable +0x00=0x078d8800);跨发送地址不变。
+  # 收件人=明文串,任意可换;内容=已知简单protobuf,可构造。
+  # 实装两条路(未做,均需进程内调企微函数,崩险):
+  #   路A capture-clone-replay: hook 捕获真 SendMessageInfo(保活)→改会话串(+0x00及嵌套多处)/改内容
+  #     protobuf→非重入延迟调 SendMessageToConversation(单例this,&sp,&cb)。嵌套结构外科手术+保活+线程。
+  #   路B 构造 SendMessageInfo: 从零建(会话串+类型2+内容protobuf+嵌套消息包)。嵌套深,难。
+  # ⚠️ 直接重入重放会崩:InstantMessaging::Send(FUN_037a5638)重入重放实测崩(异步任务机制不可重入);
+  #   SendMessageToConversation 重放须【非重入+延迟+保活】。
+  send_headless:
+    entry:            { rva: 0x541b090, sym: "MessageServiceImpl::SendMessageToConversationUsingProgressManager", conv: thiscall }
+    presend:          { rva: 0x53F09E8, sym: "SendMessageManager::PreSendNewMessage" }
+    task_sendmessage: { rva: 0x1BE028D, sym: "PostSendMessageTask2::SendMessage(build out_contact)" }
+    task_doexecute:   { rva: 0x1BD4BE0, sym: "PostSendMessageTask2::DoExecute(E2E/ilink)" }
+    service_singleton_example: 0x1f4752c8
+    smi_layout: { conv_id_str: 0x00, mysize: 0x10, type_int: 0x18, subpkg_ptrs: [0x1c, 0x20], local_msgid_str: 0x40 }
+    content_protobuf_fmt: "0a<L1> 08 00 12<L2> 0a<TL> <utf8>  (TL=len,L2=TL+2,L1=L2+2)"
+    verified: false     # 栈+布局真机确认;发送未实装
+    verified_note: "2026-07-26 svc_probe 真机捕获 SendMessageInfo 解码收件人(明文会话串@+0x00)+类型(+0x18)+内容protobuf;实装留后续"
+    # ── 路B headless 实装进展(2026-07-26 深夜, ~27 次真机崩溃迭代; send_headless_dll.c) ──
+    # 【已跑通的部件】:
+    #  1) Message 构造 = 调 FUN_0071c995(RVA 0x31c995, __cdecl RVO, out在栈:{Message*, ctrl*})
+    #     = std::make_shared<wework::model::Message>(). 内部 operator_new(0x270)+ctrl头(vtable RVA
+    #     0x65a73fc,ref=1)+body ctor FUN_04d05458(RVA 0x4905458,thiscall,清零+空串cap=0f). Message*=块+0x10.
+    #     ⚠️必须再 memset(msg,0,0x214)+重调 FUN_04d05458 清 operator new 残留垃圾.
+    #  2) 类型 msg+0x50=2; 内容 = msg+0x1B4 的 MSVC std::string(SSO≤15:内联buf+size@+0x1C4+cap@+0x1C8=15).
+    #  3) 服务单例 = 扫堆(MEM_PRIVATE RW)找 *(obj)==MessageServiceImpl vtable(base+0x6F08800);
+    #     过滤:>0x10000000 + enable_shared_from_this 自引用(+4/+8 指向自身±0x100). 真单例含
+    #     "https://rescdn.qqmail.com/.../hbskin_cover.png" 皮肤URL(可作强校验). 避开 FUN_05a15fed(用TLS会崩).
+    #  4) 【必须 UI 线程执行】: WeCom 函数用 TLS,须 SetWindowsHookEx(WH_GETMESSAGE,uiTid) marshal 到企微线程.
+    #  5) 发送入口 = MessageServiceImpl vtable[+0x10]=SendMessageToConversation(FUN_0581b090);
+    #     vtable[+0x14]=slot5 FUN_0581ad70(从Message建SMI,用环境会话DAT_086c58b0"no conversation id");
+    #     vtable[+0x18]=slot6 SendMessageToUser=FUN_0581b2e0(RVA 0x181b2e0,thiscall(svc, ret*, &uidrange{uint64* begin,end}, &shared_ptr<Message>)). 用 slot6(显式userid,最干净).
+    #  6) 内容 protobuf(真机核对修正): `0a <L1> 08 00 12 <L2> 0a <TL> <utf8>`, TL=文本字节数, L2=TL+2,
+    #     ★L1=TL+6(=08 00[2]+12 L2[2]+L2)★(曾误写 TL+4 导致解析错). 日志级别阈值 DAT_086dcbc4(RVA 0x82dcbc4,默认2).
+    # ★★重大突破(深夜续攻)★★: 之前 ~27 次"崩溃"根因=【卡死看门狗 HangMonitorV3Host】!
+    #   我把含慢扫描的 do_hsend marshal 到【UI线程】执行,堵住消息泵→WeCom 检测UI线程卡死→
+    #   TriggerDump 自杀. 【改在 worker 线程直跑(不marshal),看门狗消失,slot6 真正执行了】.
+    #   (TLS 问题只在 FUN_05a15fed,已弃用改扫描,故 worker 线程 mk/scan/slot6 都能跑.)
+    # 【worker线程后的新卡点】: slot6 早期崩在 std::string 析构(FUN_0054aee3→_Adjust_manually_vector_aligned,
+    #   RVA 0x147239, 释放 cap>15 但 _Ptr 无效的串). 即 slot6 从我的 userid 建会话/SendMessageInfo 时
+    #   产生了【损坏的 std::string】(cap>15 坏指针),错误清理时 free 它崩. 我的 Message 串都是好的SSO,
+    #   故损坏串是 slot6 内部建的——强烈提示 **userid→会话解析失败(headless下 self-uid/联系人/会话未加载)**.
+    #   WeCom 日志被我全 patch 掉(char* logger→my_logger截获; std::string logger→mov eax,ecx;ret4;
+    #   ~LogMessage析构→C3),故日志本身不再崩,崩的是真实清理逻辑. **下一步**:①查 slot6 怎么拿 self-uid
+    #   (可能需登录/账号服务,headless 下未就绪)②或弃 slot6(SendMessageToUser),改 slot4
+    #   SendMessageToConversation(用已知会话串"S:self_peer"直接建 SendMessageInfo,跳过uid解析)——
+    #   但 SendMessageInfo 嵌套 subpkg 难建 ③或 slot5(用环境会话 DAT_086c58b0,需会话已打开).
+    #   日志 patch 点:~LogMessage=FUN_005b5806(RVA 0x1b5806); std::string logger=FUN_006f5969(0x2f5969).
+    # ★Direction ② (slot4+构造SendMessageInfo, 2026-07-27)★ 比slot6更进一步但仍卡:
+    #  SendMessageInfo 可构造: FUN_01c0403b(RVA 0x180403b, make_shared<SendMessageInfo>, 0x108块).
+    #  SMI 布局(slot5 FUN_0581ad70 逆出+实测): +0x00=会话std::string, +0x18=int类型(2),
+    #    +0x1c/+0x20=内容 shared_ptr<Message>(=Message*/ctrl*), +0x60=时间戳. 我构造的SMI dump 全对
+    #    (会话串"S:自_对方"_Ptr/size/cap=35, 类型2, 内容sp). 调 slot4=FUN_0581b090(thiscall(svc,
+    #    ret*, &smi_sp, &callback)) → 崩在 FUN_0054b020(std::string拷贝,RVA 0x14b020)WRITE 到
+    #    【我DLL镜像地址】(如 0x7ccd32dc). 我SMI无DLL指针→怀疑【回调ABI】:slot4 是
+    #    SendMessageToConversation**UsingProgressManager**,从 callback 建 ProgressManager;
+    #    std::function callback 可能【按值传多栈槽】而我按指针传 → slot4 从我栈读到DLL返回地址当
+    #    函数字段→崩. 【下一步】: 构造【合法的空/no-op std::function】(MSVC std::function ABI),
+    #    或找不带 ProgressManager 的 slot4 变体, 或找 WeCom 建空 function 的工具函数复用.
+    #  代码: send_headless_dll.c /hsend4(构造SMI+slot4) + /hsend(slot6) + /diag. 三方向findings见DEVLOG.
+    # 【卡住的关卡(旧记录, slot6)】: 调 slot6 崩在 WeCom 调试日志(FUN_0054f330=ostream<<char*,RVA 0x14f330;
+    #     FUN_0055e9df streambuf). 现象:slot6 早期一个【CHECK/断言】失败(无视日志阈值,总打日志),
+    #     报错日志在【我的执行上下文里日志流损坏(*(ostream)=0 null vtable)】→崩. 即我的某个输入仍违反
+    #     slot6 断言. VEH(AddVectoredExceptionHandler)可抓崩溃点(EIP/RVA/寄存器/栈回溯),已定位崩在
+    #     FUN_0054f330. 【下一步诊断】:①核对 content std::string cap 确=15(memset后FUN_04d05458是否设+0x1C8)
+    #     ②slot6 断言可能要求 Message 更完整(recipe FUN_037a17dc 在 mk 后还调 FUN_01f4c662/FUN_05c38f60/
+    #     FUN_00717713 补 content子对象——我的 Message 可能缺这些)③或 userid 编码/service 状态问题.
+    #     ④让日志流有效(VEH 重定向 ostream)或全局关日志,让断言过后看发送是否成. 工具/代码全在
+    #     native/wecom_hook/send_headless_dll.c(HTTP /hsend{contact_id,text} + /diag只读 + VEH).
+    headless_impl_addrs:  # 运行时=GetModuleHandle(NULL)+RVA
+      make_shared_message:  0x31c995    # FUN_0071c995 __cdecl(out)
+      message_body_ctor:    0x4905458   # FUN_04d05458 thiscall(ECX=body)
+      msg_ctrl_vftable:     0x65a73fc   # _Ref_count_obj2<Message>::vftable
+      msgserviceimpl_vtable: 0x6F08800  # *(service)==此值
+      send_to_user_slot6:   0x181b2e0   # FUN_0581b2e0 thiscall(svc,ret,&uidrange,&sp<Message>)
+      send_to_conv_slot4:   0x181b090   # FUN_0581b090
+      log_level_threshold:  0x82dcbc4   # DAT_086dcbc4(默认2, <=level 则日志激活)
+      ostream_put_cstr:     0x14f330    # FUN_0054f330 崩溃日志函数
+      msg_type_off: 0x50
+      msg_content_str_off: 0x1B4
+    # 服务单例获取(干净,无需捕获;从 GetMessageService 消费者 FUN_0331bd80/dl_2f1bd80.c 逆出):
+    #   locator = FUN_05a15fed(&tmp)                       # 服务定位器/root
+    #   msgService = locator->vtable[+0x2c](&ret)          # GetMessageService (null→"GetMessageService Fail!")
+    #   msgService->vtable[+0x14](...)                     # MessageService 上的方法调用
+    # MessageServiceImpl vtable @RVA 0x73087f4 (RTTI COL @0x79dc9b0, enable_shared_from_this)
+    # SendMessageInfo shared_ptr 控制块 vtable @0x6a42ab4 (RTTI COL @0x7322a34)
+    # 相关 RTTI:PendingSendMessageInfo, SendTextMessageAppInfoItem。
+    # ⚠️ 路B 未完成:仍需(1)定位 SendMessageInfo 构造器/或 MessageService 上取 (conv,text) 的方法槽位
+    #   (2)进程内构造嵌套 SendMessageInfo + std::function 回调 (3)真机迭代。工程量大。
+    getmessageservice:
+      locator_getter:   { rva: 0x5A15FED, note: "返回服务定位器" }
+      getservice_vslot: 0x2c        # locator->vtable[0x2c] = GetMessageService
+      msgservice_method_vslot: 0x14 # 消费者示例调用的 MessageService 方法槽
+      msgserviceimpl_vtable_rva: 0x73087f4
+      consumer_example_rva: 0x2F1BD80
+
+    # ★★★ HEADLESS 数据层发送真机打通 (2026-07-27, verified=true) ★★★
+    # 不开窗/不聚焦,给孤星少将发 ASCII+中文成功正确渲染,企微不崩。工具 send_headless.dll /hsend4。
+    # ★根因(堵了整程~30次崩溃)★: 之前用 make_shared<wework::model::Message>(0x31c995) 当内容=类型全错
+    #   (偏移0是数据非vtable,slot4序列化 *(*obj+0x2c) 读NULL崩@RVA 0x5838658)。
+    #   正解内容对象 = ww_richmessage::RichMessage (vtable rva 0x65b22d4, ctrl vtable rva 0x663db58)。
+    # ground truth 靠 slot4cap_dll.c (inline hook slot4 入口) 抓真实 UI 发送 → REAL_slot4_smi_groundtruth.txt。
+    send_headless_LANDED:
+      verified: true
+      date: 2026-07-27
+      recipe:  # 见 send_headless_dll.c do_hsend4
+        - "1) service = find_service(): 扫 MEM_PRIVATE RW 找 *(obj)==base+0x6F08800 + 自引用校验"
+        - "2) content protobuf: 0a<n+6> 08 00 12<n+2> 0a<n> <utf8> → MSVC std::string (build_str,>15堆)"
+        - "3) FUN_015637e5(&rm_sp, type=2, &content_str) = make shared_ptr<ww_richmessage::RichMessage>"
+        - "4) FUN_01c0403b(&smi_sp) = make shared_ptr<SendMessageInfo>"
+        - "5) SMI+0x00=会话串'S:自_对方'(std::string); +0x18=2(类型); +0x1c/+0x20=rm_sp{obj,ctrl}(+*(ctrl+4)+=1); +0x44=本地msgid数字串"
+        - "6) slot4 FUN_0581b090(service,&retbuf,&smi_sp,&空cb) thiscall; retbuf/cb=VirtualAlloc零填"
+      addrs:  # 运行时=GetModuleHandle(NULL)+RVA
+        make_richmessage_from_content: 0x11637e5   # FUN_015637e5(out_sp, type, &content_std_string) __cdecl,out首参
+        richmessage_type_factory:      0x1163784   # FUN_01563784(out, type) 从注册表 DAT_0a9f0684 按type建空RichMessage
+        richmessage_parse_content:     0x1638eb0   # FUN_05c38eb0(content_str) thiscall→FUN_05c384f0 protobuf ParseFromArray
+        make_shared_sendmessageinfo:   0x180403b   # FUN_01c0403b __cdecl(out)
+        send_to_conv_slot4:            0x541b090   # ★真实entryRVA★ FUN_0581b090 MessageServiceImpl::SendMessageToConversation thiscall(svc,&ret,&smi_sp,&cb) push 0xBC
+        send_to_user_slot6:            0x541b2e0   # ★真实entryRVA★ FUN_0581b2e0 SendMessageToUser push 0xFC (旧记录 0x181b090/0x181b2e0 是错地址=别的函数中段)
+        richmessage_vtable:            0x65b22d4   # ww_richmessage::RichMessage::vftable
+        richmessage_ctrl_vtable:       0x663db58   # _Ref_count_obj2<ww_richmessage::RichMessage>::vftable
+        msgserviceimpl_vtable_marker:  0x6F08800   # *(service)==此值
+      smi_layout:  # SendMessageInfo (ground truth 实测)
+        conv_string:   0x00   # std::string _Ptr@+0,_Mysize@+0x10,_Myres@+0x14 (会话id"S:自_对方",>15堆)
+        type:          0x18   # =2 文本
+        content_sp_obj: 0x1c  # shared_ptr<RichMessage> 对象指针
+        content_sp_ctrl: 0x20  # shared_ptr 控制块指针
+        local_msgid:   0x44   # std::string 本地消息id(数字串,如"1785119339093")
+      caveats:
+        - "中文经 bash/curl 命令行会截断UTF-8→用 Python 写UTF-8 json文件再 curl --data-binary @file"
+        - "slot4cap 抓取时只装它,别与 wsend compose hook 同装(冲突崩)"
+        - "编译前先重启 WeCom(否则旧DLL被占用链接失败)"
+
+  # 发 · PostSendMessageTask2::DoExecute —— 底层异步发送任务执行（构造请求包/E2E加密/
+  # 上传资源）。极复杂，programmatic 直接调不现实；记录仅供理解发送链。
+  send_task_doexecute:
+    aob: "68 F8 00 00 00 B8 ?? ?? ?? ?? E8 ?? ?? ?? ?? ?? ?? ?? 75 CC 33 C0 8D 7E 30 89 45 BC 89 7D C8 39"
+    rva: 0x01BD4BE0
+    module: WXWork.exe
+    calling_conv: thiscall
+    unique_in_text: true
+    verified: false
+
+  # ★★ 本地库 message.db 解密读取 —— 2026-07-28【真机 inline hook 收割解密明文成功】★★
+  # 企微 message.db 用 WCDB 自研 cipher 加密（非标准 SQLCipher；密钥不驻留明文，外部解密走不通，
+  # 见 docs/wecom-local-msgdb-re-plan.md 四点五/四点六）。改走"进程内被动收割"：企微进程内已把库
+  # 解密打开，hook sqlite3_column_text 在企微读消息历史时截获每列解密后的明文——加密对我们等效失效。
+  # Ghidra 反编译坐实 column_* 一家（imageBase 0x400000；旁证=WCDB 薄封装 FUN_006cddc0 依次调
+  #   FUN_006cdb00→FUN_006ce8c0→FUN_00624740，签名(stmt,col)→uchar*）：
+  #   column_text=0x224740  column_bytes=0x224800  column_double=0x2249C0
+  #   column_int=0x224AA0   column_int64=0x224B60  VdbeExec=0x2638A0(step 执行核,二级锚,未上钩)
+  # Vdbe 结果集布局：pResultSet=*(stmt+0x68)  nCol=*(u16)(stmt+0x8c)  Mem 步长0x28
+  #   flags@+8(u16: MEM_Str=0x2/MEM_Blob=0x10)  enc@+0xa  z@+0x10  n@+0xc
+  # 探针 native/wecom_hook/col_probe_dll.c：AOB 闸偷 6 字节；detour 全程无锁(避 HangMonitorV3 自杀)；
+  #   GET /collog?since= 拉环形缓冲。真机 pid22256/基址0x9d0000 收割 809 列值，解出明文中文聊天消息
+  #   (以上是打招呼内容 / 你已添加了孤星少将…)、消息 envelope(CAEQ clientmsgid + int64 svrid + 时间)、
+  #   联系人(孤星少将)、CRM 看板。Python 解析层 widget/wecom/msgdb.py + 桥 fetch_collog + adapter
+  #   harvest_history_texts()（反哺连接前历史+人工手打）。
+  sqlite_column_text:
+    func: FUN_00624740
+    rva: 0x00224740
+    module: WXWork.exe
+    calling_conv: cdecl        # (sqlite3_stmt* stmt @[esp+4], int col @[esp+8]) -> const unsigned char*
+    hook_stolen_len: 6
+    prologue_verify: "55 8B EC 51 53 56 8B 75 08"
+    vdbe_result_layout:
+      pResultSet_off: 0x68
+      nCol_off:       0x8c     # u16
+      mem_stride:     0x28
+      mem_flags_off:  0x08     # u16; MEM_Str=0x2 MEM_Blob=0x10
+      mem_enc_off:    0x0a
+      mem_z_off:      0x10
+      mem_n_off:      0x0c
+    family:                    # 同款 WCDB 薄封装可选加钩做行关联
+      column_bytes:  0x00224800
+      column_double: 0x002249C0
+      column_int:    0x00224AA0
+      column_int64:  0x00224B60
+      vdbe_exec:     0x002638A0
+    verified: true             # 2026-07-28 真机 inline hook 收割解密明文实测通过（只读/无锁/干净摘钩/企微存活）
+    verified_note: "注入 col_probe.dll → ih_install 6B @0x224740 → /collog 收割 809 列值 → 解出明文聊天消息+envelope → 企微存活"
+
+  # ★★★ 路线 B step3: 进程内自查读【全量】历史 —— 2026-07-28【真机跑通，读出全部结构化历史】★★★
+  # 复用企微进程内已解密的 sqlite 连接，跑我们自己的只读 SELECT，得所有会话所有消息的
+  # {conversation_id, sender_id, content_type, send_time, content} = 个人微信 QueryDB 式"开箱读全库"。
+  # Ghidra 反编译 + 真机 SELECT 1 坐实（RVA imageBase 0x400000）：
+  sqlite_self_query:
+    # sqlite3LockAndPrepare(db,zSql,nByte,prepFlags,pReprepare,ppStmt,pzTail) —— 编译 SQL
+    #   ★关键坑：混合约定★ ECX=db, EDX=sql, 5个栈参, 末尾【plain RET=调用方清栈】(非 fastcall 的被调清栈)。
+    #   GCC __attribute__((fastcall)) 会按被调清栈→返回后 ESP 少 0x14→本地变量错位→崩。
+    #   必须用裸 asm 桩：ECX/EDX 装前两参，右→左压 5 栈参，call，然后【调用方】addl $20 清栈。
+    lock_and_prepare: { rva: 0x0025A9F0, conv: "ecx=db,edx=sql,+5栈参,调用方清栈" }
+    prepare_inner:    { rva: 0x0025A400 }   # sqlite3Prepare(调 RunParser 0x27E8E0)，LockAndPrepare 内部调
+    step:             { rva: 0x00223E30, conv: fastcall }  # sqlite3Step(stmt=ECX)->100=ROW/0x65=DONE；★须持 db mutex★
+    finalize:         { rva: 0x00222FC0, conv: cdecl }     # sqlite3_finalize(stmt @[esp+4])
+    column_text:      { rva: 0x00224740, conv: cdecl }     # 复用上面的 sqlite_column_text
+    vdbe_exec:        { rva: 0x002269D0 }   # sqlite3VdbeExec（step 内部调；真 VdbeExec，非 0x2638A0）
+    # sqlite3 结构关键偏移：
+    vdbe_db_off:   0x00           # Vdbe->db = *(void**)stmt
+    vdbe_magic_off: 0x14          # Vdbe magic：RESET=0x2df20da3 / RUN=0x319c2973（自查前校验 stmt 有效）
+    vdbe_ncol_off: 0x8c           # *(u16*)(stmt+0x8c) = 列数（不必调 column_count）
+    db_magic_off:  0x58           # sqlite3 magic：OPEN=0xA029A697（校验捕获的 db 句柄有效）
+    db_mutex_off:  0x0c           # sqlite3->mutex（真机=0！WCDB 用 NOMUTEX 连接，见下）
+    mutex_enter_fnptr_rva: 0x46DCC24   # 全局函数指针=sqlite3_mutex 的 xMutexEnter（列函数就这么调）
+    mutex_leave_fnptr_rva: 0x46DCC2C
+    schema:
+      message_table: "message_table(message_id,server_id,sequence,sender_id,conversation_id,content_type,send_time,flag,content,...)"
+      conv_id_1to1:  "S:<A>_<B>（1:1，self 可能在前或后，两序都要匹配）"
+      text_content_pb: "content_type=2 的 content: 0A<n> 08 00 12<m> 0A<k> <UTF-8>（widget/wecom/msgdb.parse_text_content 解）"
+    thread_safety_note: >
+      db->mutex 真机=0（WCDB 用 SQLITE_OPEN_NOMUTEX 连接池，自己在池层串行化）。故 db_mtx 实为 no-op，
+      自查在 bridge 线程跑=与企微 DB 线程无内建互斥。SELECT 1/schema/整段历史多次查询真机未崩（企微空闲时低争用），
+      但这是残留风险；生产建议企微空闲时查 + 失败重试。若要更硬：marshal 到企微 DB 线程或找 WCDB 池锁。
+    native: "native/wecom_hook/col_hook.c::col_hook_query（裸 asm call_prepare + db magic 校验 + SELECT-only + stmt magic 闸）"
+    endpoints: "GET /wecom_dbs（列捕获句柄）+ POST /wecom_query{db,sql}（只读自查）"
+    verified: true             # 2026-07-28 真机跑通：SELECT 1 → schema → message_table 全量 63 条 → 孤星少将 35 条结构化历史（我/客户+时间+正文），企微存活
+    verified_note: "SELECT 1 先验约定(裸asm桩修好)→sqlite_master 找 message_table→读出全部测试消息(rxmark/ZZRECV/DEVDONE/恭喜已开发完成/headless已打通/3-2/1+1)"
+
+# 收侧消息对象 CRTX::WebMsg 的字段布局（recv_webmsg_parser 逆出，dword 索引）：
+#   [2]  = 原始 flags/type    *(param+8)
+#   [4]/[5]/[6]/[7] = 四个 std::string 身份串 @对象偏移 0x10/0x14/0x18/0x1c
+#        （条件置位，默认空串 &DAT_0aae3180）——企微语义=userid/external_userid/roomid 等，
+#          【具体哪个是 文本/发件人/会话 未确认】，需真机动态断点看真消息。
+#   [8]/[9]/[10] = 三个子对象 @0x20/0x24/0x28（文本正文很可能在其中之一）
+#   [0xc..0xc+0x18] = 0x30 起 96 字节定长块（时间戳/seq/flags）
+webmsg_layout:
+  vftable_symbol: "CRTX::WebMsg::vftable"
+  id_string_offsets: [0x10, 0x14, 0x18, 0x1c]   # 4×std::string(经 FUN_00717757 赋值)；语义未定，待动态确认
+  sub_objects:                                   # 深度嵌套解析对象（正文可能在其一，需动态确认）
+    - { off: 0x20, type: "CRTX::MsgReceiver" }
+    - { off: 0x24, type: "CRTX::SubOpenMsg" }
+    - { off: 0x28, type: "CRTX::WebMsgExtInfo" }
+  fixed_block_offset: 0x30                        # 起 96 字节定长块（时间戳/seq/flags）
+  verified: false
+
+# 裸 RVA 兜底（每次小版本几乎必失效）。
+symbols: {}
+
+notes: >
+  【状态 2026-07-26】静态逆向已定位发送/接收关键函数并生成唯一 AOB，但 verified 全 False：
+  收侧"哪个字符串=文本/发件人/会话"、文本正文在哪个子对象，均需【真机动态确认】(第二台设备
+  发一条唯一标记消息 → 在 recv_fetchfinish/recv_webmsg_parser 下断点 → 读 WebMsg 字段比对)。
+  发送侧 programmatic 调用不现实，落地走 UI 驱动(DuiLib SetText 输入框+触发发送)，需用户在场验证。
+  在 verified:true 之前，wecom_hook.dll 绝不 patch 企微内存 / 绝不 auto-install hook。
+  安全设计：注入后仅【只读】校验 AOB 命中活镜像，真正 inline hook 走显式 /hook/install，用户在场触发。

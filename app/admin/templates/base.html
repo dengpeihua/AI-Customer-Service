@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI 客服 · 管理后台</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/htmx.org@1.9.12"></script>
+</head><body class="bg-slate-50 text-slate-800">
+<div class="flex min-h-screen">
+  <aside class="w-52 bg-white border-r border-slate-200 p-4">
+    <div class="font-bold text-teal-600 mb-4">AI 客服后台</div>
+    <nav class="space-y-1 text-sm">
+      {% set nav=[('home','看板','/admin'),('kb','知识库','/admin/kb'),('bot','机器人配置','/admin/bot'),('tags','客户标签','/admin/tags'),('conversations','会话','/admin/conversations'),('users','账号','/admin/users')] %}
+      {% for key,label,href in nav %}
+      <a href="{{href}}" class="block px-3 py-2 rounded {{ 'bg-teal-50 text-teal-700 font-medium' if active==key else 'hover:bg-slate-100' }}">{{label}}</a>
+      {% endfor %}
+      <form method="post" action="/admin/logout" class="pt-3"><button class="text-slate-400 hover:text-slate-600 px-3 py-2 text-sm">退出登录</button></form>
+    </nav>
+  </aside>
+  <main class="flex-1 p-6">{% block body %}{% endblock %}</main>
+</div></body></html>

@@ -1,0 +1,546 @@
+from __future__ import annotations
+
+import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
+
+from widget.config import NotificationConfig, WidgetConfig, load_config
+from widget.handoff import HandoffController
+from widget.inbound import InboundFilter
+from widget.notifications import NotificationGate
+from widget.pipeline import Pipeline
+from widget.scope import conversation_key, should_handle
+from widget.state import RuntimeState
+from widget.wecom.config import WeComHookConfig
+
+
+def _msg(*, msg_id: str = "m1", channel: str = "wechat_personal",
+         contact: str = "wxid_customer") -> dict:
+    return {
+        "channel": channel,
+        "msg_id": msg_id,
+        "contact_id": contact,
+        "sender_id": contact,
+        "text": "请问怎么配送？",
+        "is_group": False,
+        "at_me": False,
+        "timestamp": 1,
+    }
+
+
+class _Bridge:
+    def __init__(self, result: dict):
+        self.result = result
+        self.calls = 0
+        self.delivery_updates: list[tuple[int, str]] = []
+
+    def chat(self, _msg, conversation_id=None):
+        self.calls += 1
+        return dict(self.result)
+
+    def mark_delivery(
+        self, message_id: int, delivery_status: str, *, attempt_id: str = "",
+    ) -> dict:
+        self.delivery_updates.append((message_id, delivery_status))
+        return {
+            "message_id": message_id, "delivery_status": delivery_status,
+            "changed": True, "attempt_id": attempt_id,
+            "recovered_expired_lease": False,
+        }
+
+
+class _RecoveringBridge(_Bridge):
+    def chat(self, _msg, conversation_id=None, **_kwargs):
+        self.calls += 1
+        if self.calls == 1:
+            from widget.bridge import BridgeError
+
+            raise BridgeError("response lost after backend completed")
+        return dict(self.result)
+
+
+class _ProcessingBridge(_Bridge):
+    def chat(self, _msg, conversation_id=None, **_kwargs):
+        self.calls += 1
+        if self.calls < 3:
+            return {
+                "action": "processing", "reply_text": "", "conversation_id": 7,
+                "outbound_message_id": 0, "deduplicated": True,
+            }
+        return dict(self.result)
+
+
+class _Sender:
+    def __init__(self, ok: bool = True):
+        self.calls = 0
+        self.sent: list[tuple[str, str]] = []
+        self.ok = ok
+
+    def deliver(self, contact: str, text: str, reply_to=None) -> bool:
+        self.calls += 1
+        self.sent.append((contact, text, reply_to))
+        return self.ok
+
+
+class _HandoffAdapter:
+    def __init__(self):
+        self.sent = []
+        self.sent_messages = []
+
+    def send_message(self, contact: str, text: str, provenance: str):
+        self.sent_messages.append((contact, text, provenance))
+        return SimpleNamespace(ok=provenance == "human")
+
+    def send_reply(self, contact: str, text: str, reply_to: dict, provenance: str):
+        self.sent.append((contact, text, reply_to, provenance))
+        return SimpleNamespace(ok=provenance == "human")
+
+
+class _HandoffHub:
+    def __init__(self):
+        self.adapter_instance = _HandoffAdapter()
+        self.pipeline_instance = SimpleNamespace(release_contact=lambda _contact: None)
+
+    def adapter(self, _channel=None):
+        return self.adapter_instance
+
+    def pipeline(self, _channel=None):
+        return self.pipeline_instance
+
+
+class MessagePolicyTests(unittest.TestCase):
+    def test_auto_send_is_disabled_by_default(self):
+        self.assertFalse(WidgetConfig().auto_send)
+
+    def test_channel_conversation_blocklist_stops_before_backend(self):
+        cfg = WidgetConfig()
+        cfg.scope.private_mode = "all"
+        cfg.scope.conversation_blocklist.append(
+            conversation_key("wechat_personal", "wxid_customer")
+        )
+        bridge = _Bridge({"action": "handoff", "reply_text": "人工"})
+        pipe = Pipeline(cfg, InboundFilter(), bridge, _Sender(), "wxid_self")
+
+        self.assertEqual("ignored", pipe.handle(_msg()))
+        self.assertEqual(0, bridge.calls)
+        self.assertFalse(should_handle(_msg(), cfg.scope))
+
+    def test_selected_mode_only_accepts_explicit_customer(self):
+        cfg = WidgetConfig()
+        cfg.scope.private_mode = "selected"
+        self.assertFalse(should_handle(_msg(), cfg.scope))
+        cfg.scope.conversation_allowlist.append(
+            conversation_key("wechat_personal", "wxid_customer")
+        )
+        self.assertTrue(should_handle(_msg(), cfg.scope))
+
+    def test_selected_mode_also_requires_explicit_group_conversation(self):
+        cfg = WidgetConfig()
+        cfg.scope.private_mode = "selected"
+        cfg.scope.allow_group = True
+        cfg.scope.group_trigger = "all"
+        group = _msg(contact="customer_group@chatroom")
+        group["is_group"] = True
+
+        self.assertFalse(should_handle(group, cfg.scope))
+        cfg.scope.conversation_allowlist.append(
+            conversation_key("wechat_personal", "customer_group@chatroom")
+        )
+        self.assertTrue(should_handle(group, cfg.scope))
+
+    def test_answerable_message_is_quiet_draft_when_auto_send_is_off(self):
+        cfg = WidgetConfig(auto_send=False)
+        cfg.scope.private_mode = "all"
+        bridge = _Bridge({
+            "action": "auto_reply", "reply_text": "支持同城配送。", "conversation_id": 7,
+            "outbound_message_id": 70,
+        })
+        sender = _Sender()
+        pending = []
+        pipe = Pipeline(cfg, InboundFilter(), bridge, sender, "wxid_self",
+                        on_pending=lambda m, r: pending.append((m, r)))
+
+        self.assertEqual("auto_reply_draft", pipe.handle(_msg()))
+        self.assertEqual(0, sender.calls)
+        self.assertEqual("auto_reply_draft", pending[0][1]["pending_kind"])
+        self.assertEqual([(70, "draft")], bridge.delivery_updates)
+
+    def test_handoff_sends_notice_and_remains_pending(self):
+        cfg = WidgetConfig(auto_send=True)
+        cfg.scope.private_mode = "all"
+        bridge = _Bridge({
+            "action": "handoff",
+            "reply_text": "帮您转接人工客服回复中，请稍等",
+            "outbound_message_id": 71,
+        })
+        sender = _Sender()
+        pending = []
+        pipe = Pipeline(cfg, InboundFilter(), bridge, sender, "wxid_self",
+                        on_pending=lambda m, r: pending.append((m, r)))
+
+        self.assertEqual("handoff", pipe.handle(_msg()))
+        self.assertEqual(
+            [("wxid_customer", "帮您转接人工客服回复中，请稍等", None)],
+            sender.sent,
+        )
+        self.assertEqual(1, len(pending))
+        self.assertEqual("handoff_notified", pending[0][1]["record_action"])
+
+    def test_handoff_is_pending_but_not_sent_when_auto_send_is_off(self):
+        cfg = WidgetConfig(auto_send=False)
+        cfg.scope.private_mode = "all"
+        sender = _Sender()
+        pending = []
+        pipe = Pipeline(
+            cfg,
+            InboundFilter(),
+            _Bridge({
+                "action": "handoff", "reply_text": cfg.handoff_reply,
+                "outbound_message_id": 72,
+            }),
+            sender,
+            "wxid_self",
+            on_pending=lambda m, r: pending.append((m, r)),
+        )
+
+        self.assertEqual("handoff", pipe.handle(_msg()))
+        self.assertEqual([], sender.sent)
+        self.assertEqual(1, len(pending))
+
+    def test_failed_handoff_notice_still_remains_pending(self):
+        cfg = WidgetConfig(auto_send=True)
+        cfg.scope.private_mode = "all"
+        sender = _Sender(ok=False)
+        pending = []
+        pipe = Pipeline(
+            cfg,
+            InboundFilter(),
+            _Bridge({
+                "action": "handoff", "reply_text": cfg.handoff_reply,
+                "outbound_message_id": 73,
+            }),
+            sender,
+            "wxid_self",
+            on_pending=lambda m, r: pending.append((m, r)),
+        )
+
+        self.assertEqual("handoff", pipe.handle(_msg()))
+        self.assertEqual(1, len(sender.sent))
+        self.assertEqual(1, len(pending))
+        self.assertNotIn("record_action", pending[0][1])
+
+    def test_default_handoff_notice_matches_customer_copy(self):
+        self.assertEqual(
+            "帮您转接人工客服回复中，请稍等",
+            WidgetConfig().handoff_reply,
+        )
+
+    def test_pending_messages_remain_independent_per_inbound_message(self):
+        state = RuntimeState(WidgetConfig())
+        state.add_pending(_msg(msg_id="m1"), {"reply_text": "草稿1"})
+        second = _msg(msg_id="m2")
+        second["text"] = "第二条"
+        state.add_pending(second, {"reply_text": "草稿2"})
+
+        self.assertEqual(2, len(state.pending))
+        self.assertEqual(["m1", "m2"], [item["msg_id"] for item in state.pending])
+        self.assertEqual(["请问怎么配送？", "第二条"], [item["text"] for item in state.pending])
+
+    def test_sent_handoff_notice_is_counted_as_an_outbound_message(self):
+        state = RuntimeState(WidgetConfig())
+
+        state.record_inbound(_msg(), "handoff_notified")
+
+        self.assertEqual((1, 1), state.today_counts())
+        self.assertEqual(1, state.sent_by_channel["wechat_personal"])
+
+    def test_manual_reply_removes_pending_and_notifies_navigation(self):
+        state = RuntimeState(WidgetConfig())
+        state.add_pending(_msg(), {"reply_text": "draft"})
+        changes = []
+        controller = HandoffController(
+            _HandoffHub(), state, on_changed=lambda: changes.append(len(state.pending))
+        )
+
+        pending_id = state.pending[0]["id"]
+        self.assertTrue(controller.reply_pending(pending_id, "已人工回复"))
+        self.assertEqual([], state.pending)
+        self.assertEqual([0], changes)
+
+    def test_replying_one_pending_message_keeps_other_messages_for_same_customer(self):
+        state = RuntimeState(WidgetConfig())
+        first = _msg(msg_id="m1")
+        second = _msg(msg_id="m2")
+        second["text"] = "第二个问题"
+        state.add_pending(first, {"reply_text": "草稿1"})
+        state.add_pending(second, {"reply_text": "草稿2"})
+        controller = HandoffController(_HandoffHub(), state)
+        live_events = []
+        state.set_conversation_listener(live_events.append)
+
+        self.assertTrue(controller.reply_pending(state.pending[1]["id"], "第二题答复"))
+
+        self.assertEqual(["m1"], [item["msg_id"] for item in state.pending])
+        sent = controller.hub.adapter_instance.sent
+        self.assertEqual(1, len(sent))
+        self.assertEqual(("wxid_customer", "第二题答复", "human"),
+                         (sent[0][0], sent[0][1], sent[0][3]))
+        self.assertEqual("m2", sent[0][2]["msg_id"])
+        self.assertEqual("第二个问题", sent[0][2]["text"])
+        self.assertEqual("wxid_customer", live_events[0]["contact_id"])
+        self.assertIn("第二个问题", live_events[0]["text"])
+
+    def test_manual_message_outside_pending_queue_is_not_quoted(self):
+        hub = _HandoffHub()
+        controller = HandoffController(hub, RuntimeState(WidgetConfig()))
+
+        self.assertTrue(controller.send("wxid_customer", "普通人工消息"))
+
+        self.assertEqual([], hub.adapter_instance.sent)
+        self.assertEqual(
+            [("wxid_customer", "普通人工消息", "human")],
+            hub.adapter_instance.sent_messages,
+        )
+
+    def test_ai_reply_does_not_quote_the_inbound_message(self):
+        cfg = WidgetConfig(auto_send=True)
+        cfg.scope.private_mode = "all"
+        sender = _Sender()
+        pipe = Pipeline(
+            cfg,
+            InboundFilter(),
+            _Bridge({
+                "action": "auto_reply", "reply_text": "第二题的答案",
+                "outbound_message_id": 81,
+            }),
+            sender,
+            "wxid_self",
+        )
+        inbound = _msg(msg_id="m2")
+        inbound["text"] = "这是第二个问题"
+
+        self.assertEqual("auto_reply", pipe.handle(inbound))
+        self.assertEqual(
+            [("wxid_customer", "第二题的答案", None)],
+            sender.sent,
+        )
+        self.assertEqual([(81, "sending"), (81, "delivered")], pipe.bridge.delivery_updates)
+
+    def test_failed_ai_send_is_marked_failed_and_never_confirmed_delivered(self):
+        cfg = WidgetConfig(auto_send=True)
+        cfg.scope.private_mode = "all"
+        bridge = _Bridge({
+            "action": "auto_reply", "reply_text": "支持同城配送。",
+            "outbound_message_id": 82,
+        })
+        pending = []
+        pipe = Pipeline(
+            cfg, InboundFilter(), bridge, _Sender(ok=False), "wxid_self",
+            on_pending=lambda m, r: pending.append((m, r)),
+        )
+
+        self.assertEqual("handoff", pipe.handle(_msg()))
+        self.assertEqual([(82, "sending"), (82, "failed")], bridge.delivery_updates)
+        self.assertEqual(1, len(pending))
+
+    def test_backend_duplicate_result_is_not_sent_again(self):
+        cfg = WidgetConfig(auto_send=True)
+        cfg.scope.private_mode = "all"
+        sender = _Sender()
+        pipe = Pipeline(
+            cfg,
+            InboundFilter(),
+            _Bridge({
+                "action": "duplicate", "reply_text": "", "conversation_id": 7,
+                "outbound_message_id": 82, "deduplicated": True,
+            }),
+            sender,
+            "wxid_self",
+        )
+
+        self.assertEqual("ignored", pipe.handle(_msg()))
+        self.assertEqual([], sender.sent)
+
+    def test_lost_first_response_recovers_pending_reply_without_second_generation(self):
+        cfg = WidgetConfig(auto_send=True)
+        cfg.scope.private_mode = "all"
+        sender = _Sender()
+        bridge = _RecoveringBridge({
+            "action": "auto_reply", "reply_text": "恢复投递的回答",
+            "conversation_id": 7, "outbound_message_id": 83,
+            "deduplicated": True,
+        })
+        pipe = Pipeline(cfg, InboundFilter(), bridge, sender, "wxid_self")
+
+        self.assertEqual("auto_reply", pipe.handle(_msg()))
+        self.assertEqual(2, bridge.calls)
+        self.assertEqual([("wxid_customer", "恢复投递的回答", None)], sender.sent)
+        self.assertEqual([(83, "sending"), (83, "delivered")], bridge.delivery_updates)
+
+    def test_overlapping_retry_polls_until_first_request_finishes_generation(self):
+        cfg = WidgetConfig(auto_send=True)
+        cfg.scope.private_mode = "all"
+        sleeps = []
+        sender = _Sender()
+        bridge = _ProcessingBridge({
+            "action": "auto_reply", "reply_text": "稍后完成的回答",
+            "conversation_id": 7, "outbound_message_id": 84,
+            "deduplicated": True, "delivery_status": "pending",
+        })
+        pipe = Pipeline(
+            cfg, InboundFilter(), bridge, sender, "wxid_self",
+            recovery_sleep=sleeps.append, recovery_attempts=4,
+        )
+
+        self.assertEqual("auto_reply", pipe.handle(_msg()))
+        self.assertEqual(3, bridge.calls)
+        self.assertEqual([1.0, 1.0], sleeps)
+        self.assertEqual([("wxid_customer", "稍后完成的回答", None)], sender.sent)
+
+    def test_processing_recovery_uses_short_deadline_bounded_probes(self):
+        cfg = WidgetConfig(auto_send=True)
+        cfg.scope.private_mode = "all"
+        clock = [0.0]
+        timeouts = []
+
+        class NeverReadyBridge(_Bridge):
+            def chat(self, _msg, conversation_id=None, **kwargs):
+                self.calls += 1
+                timeouts.append(kwargs.get("timeout"))
+                if self.calls > 1:
+                    clock[0] += float(kwargs.get("timeout") or 0)
+                return {"action": "processing", "conversation_id": 7}
+
+        bridge = NeverReadyBridge({})
+        pending = []
+        pipe = Pipeline(
+            cfg, InboundFilter(), bridge, _Sender(), "wxid_self",
+            on_pending=lambda m, r: pending.append((m, r)),
+            recovery_sleep=lambda seconds: clock.__setitem__(0, clock[0] + seconds),
+            recovery_clock=lambda: clock[0], recovery_budget_s=6,
+            recovery_attempts=20,
+        )
+
+        self.assertEqual("error", pipe.handle(_msg()))
+        self.assertEqual([None, 5.0], timeouts)
+        self.assertLessEqual(clock[0], 6.0)
+
+    def test_expired_lease_reconciles_local_history_before_resend(self):
+        cfg = WidgetConfig(auto_send=True)
+        cfg.scope.private_mode = "all"
+        bridge = _Bridge({
+            "action": "auto_reply", "reply_text": "已经在微信里",
+            "conversation_id": 7, "outbound_message_id": 86,
+            "delivery_status": "sending", "deduplicated": True,
+        })
+        sender = _Sender()
+        sender.was_delivered_since = lambda _contact, _text, _since: True
+        original_mark = bridge.mark_delivery
+
+        def takeover_mark(message_id, delivery_status, *, attempt_id=""):
+            response = original_mark(
+                message_id, delivery_status, attempt_id=attempt_id,
+            )
+            if delivery_status == "sending":
+                response["recovered_expired_lease"] = True
+            return response
+
+        bridge.mark_delivery = takeover_mark
+        pipe = Pipeline(cfg, InboundFilter(), bridge, sender, "wxid_self")
+
+        self.assertEqual("auto_reply", pipe.handle(_msg()))
+        self.assertEqual([], sender.sent)
+        self.assertEqual([(86, "sending"), (86, "delivered")], bridge.delivery_updates)
+
+    def test_fresh_claim_does_not_use_same_text_history_to_skip_send(self):
+        cfg = WidgetConfig(auto_send=True)
+        cfg.scope.private_mode = "all"
+        bridge = _Bridge({
+            "action": "auto_reply", "reply_text": "固定问候",
+            "conversation_id": 7, "outbound_message_id": 87,
+            "delivery_status": "pending",
+        })
+        sender = _Sender()
+        sender.was_delivered_since = lambda _contact, _text, _since: True
+        pipe = Pipeline(cfg, InboundFilter(), bridge, sender, "wxid_self")
+
+        self.assertEqual("auto_reply", pipe.handle(_msg()))
+        self.assertEqual([("wxid_customer", "固定问候", None)], sender.sent)
+
+    def test_two_delivery_attempts_only_send_once_when_second_cannot_claim(self):
+        cfg = WidgetConfig(auto_send=True)
+        cfg.scope.private_mode = "all"
+        sender = _Sender()
+
+        class SingleClaimBridge(_Bridge):
+            claimed = False
+
+            def mark_delivery(self, message_id, delivery_status, *, attempt_id=""):
+                if delivery_status == "sending":
+                    if self.claimed:
+                        return {
+                            "delivery_status": "sending", "changed": False,
+                            "attempt_id": "first-owner",
+                        }
+                    self.claimed = True
+                self.delivery_updates.append((message_id, delivery_status))
+                return {
+                    "delivery_status": delivery_status, "changed": True,
+                    "attempt_id": attempt_id,
+                }
+
+        bridge = SingleClaimBridge({
+            "action": "auto_reply", "reply_text": "只应发送一次",
+            "conversation_id": 7, "outbound_message_id": 85,
+        })
+        first = Pipeline(cfg, InboundFilter(), bridge, sender, "wxid_self")
+        second = Pipeline(cfg, InboundFilter(), bridge, sender, "wxid_self")
+
+        self.assertEqual("auto_reply", first.handle(_msg(msg_id="shared")))
+        self.assertEqual("ignored", second.handle(_msg(msg_id="shared")))
+        self.assertEqual(1, len(sender.sent))
+
+    def test_live_events_quote_only_manual_pending_replies(self):
+        state = RuntimeState(WidgetConfig())
+        events = []
+        state.set_conversation_listener(events.append)
+        inbound = _msg()
+
+        state.publish_outbound(inbound, "AI 自动回答", "ai")
+        state.publish_outbound(inbound, "人工待办回答", "agent", quote=True)
+
+        self.assertEqual("AI 自动回答", events[0]["text"])
+        self.assertNotIn("请问怎么配送", events[0]["text"])
+        self.assertIn("人工待办回答", events[1]["text"])
+        self.assertIn("请问怎么配送", events[1]["text"])
+
+    def test_notification_gate_only_notifies_handoff_and_applies_cooldown(self):
+        now = [100.0]
+        cfg = NotificationConfig(handoff=True, auto_reply=False, cooldown_s=30)
+        gate = NotificationGate(cfg, clock=lambda: now[0])
+
+        self.assertFalse(gate.should_notify("auto_reply", "wechat", "customer"))
+        self.assertTrue(gate.should_notify("handoff", "wechat", "customer"))
+        self.assertFalse(gate.should_notify("handoff", "wechat", "customer"))
+        now[0] += 31
+        self.assertTrue(gate.should_notify("handoff", "wechat", "customer"))
+
+    def test_wecom_history_is_not_auto_written_to_kb_by_default(self):
+        self.assertFalse(WeComHookConfig().auto_history_sync)
+
+    def test_conversation_and_notification_choices_are_persisted(self):
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "widget.yaml"
+            state = RuntimeState(WidgetConfig(), config_path=path)
+            state.set_conversation_enabled("wechat", "customer", True)
+            state.set_notifications(auto_reply=True, bring_to_front=True)
+
+            loaded = load_config(path)
+            self.assertIn("wechat|customer", loaded.scope.conversation_allowlist)
+            self.assertTrue(loaded.notifications.auto_reply)
+            self.assertTrue(loaded.notifications.bring_to_front)
+
+
+if __name__ == "__main__":
+    unittest.main()

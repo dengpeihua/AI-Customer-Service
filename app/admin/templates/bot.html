@@ -1,0 +1,14 @@
+{% extends "base.html" %}{% block body %}
+<h1 class="text-xl font-semibold mb-4">机器人配置</h1>
+<form method="post" action="/admin/bot" class="bg-white rounded-xl p-5 shadow-sm space-y-4 max-w-xl">
+  <div><label class="text-sm text-slate-500">欢迎语</label><input name="welcome" value="{{cfg.welcome}}" class="w-full border rounded px-3 py-2"></div>
+  <div><label class="text-sm text-slate-500">人设 persona</label><input name="persona" value="{{cfg.persona}}" class="w-full border rounded px-3 py-2"></div>
+  <div><label class="text-sm text-slate-500">语气档位</label>
+    <select name="tone_level" class="w-full border rounded px-3 py-2">
+      <option value="formal"{% if cfg.tone_level == 'formal' %} selected{% endif %}>正式</option>
+      <option value="warm"{% if cfg.tone_level == 'warm' %} selected{% endif %}>温暖</option>
+      <option value="casual"{% if cfg.tone_level == 'casual' %} selected{% endif %}>随意</option>
+    </select></div>
+  <button class="bg-teal-600 text-white rounded px-4 py-2">保存</button>
+</form>
+{% endblock %}

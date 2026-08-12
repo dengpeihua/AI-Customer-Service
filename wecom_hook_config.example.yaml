@@ -1,0 +1,26 @@
+# 企业微信（WXWork.exe）自研 hook 渠道配置。
+#
+# 客户【不需要手动改这个文件】——一键启动器首次运行会自动生成 wecom_hook_config.yaml，
+# 自动填好企业微信路径、self_id 由系统在运行时自动识别（从本地库会话 id 反推）。
+# 本 .example 只是模板/参考。
+#
+# 机制：挂件启动时若存在 wecom_hook_config.yaml，会自动用 wecom_injector.exe 把 wecom_hook.dll
+# 注入运行中的企业微信并连接；hook 偏移强绑 5.0.3.6005，版本不符会被 strict_version 拒绝（不会
+# 硬注写崩企微）。发送/收消息/读全量历史都用自动识别出的 self_id。
+
+bridge_port: 8752            # 本机 hook 桥端口（仅 127.0.0.1，绝不对外）
+token: ""                    # 留空 = 连接器每次随机生成（更安全）
+
+self_id: ""                  # 【留空即可】系统运行时自动识别本企微账号 uid；填了则以填的为准
+
+process_name: "WXWork.exe"
+required_version: "5.0.3.6005"
+strict_version: true         # 版本读到但不符 → 拒绝注入（保护，别关）
+wework_exe_path: ""          # 启动器会自动填成检测到的企业微信 WXWork.exe 路径（开版本闸防注错版本）
+auto_launch: false           # 由启动器负责起企微，这里留 false
+
+wait_login: false
+harden_disable_autostart: false
+
+# 默认关闭全量历史自动反哺。只在企业已完成隐私审查并明确需要时才改为 true。
+auto_history_sync: false

@@ -1,0 +1,18 @@
+{% extends "base.html" %}{% block body %}
+<h1 class="text-xl font-semibold mb-4">账号 / 坐席管理</h1>
+<form method="post" action="/admin/users" class="bg-white rounded-xl p-4 shadow-sm mb-4 flex gap-2 items-end flex-wrap">
+  <input name="login" placeholder="登录名" class="border rounded px-3 py-2" required>
+  <input name="password" type="password" placeholder="密码" class="border rounded px-3 py-2" required>
+  <select name="role" class="border rounded px-3 py-2"><option value="agent">坐席</option><option value="admin">管理员</option></select>
+  <button class="bg-teal-600 text-white rounded px-4 py-2">添加</button>
+</form>
+<div class="bg-white rounded-xl shadow-sm divide-y">
+  {% for u in users %}
+  <div class="flex items-center justify-between px-4 py-3">
+    <div><span class="font-medium">{{u.login}}</span> <span class="text-xs text-slate-400">{{u.role}}</span></div>
+    {% if u.id != user.id %}<form method="post" action="/admin/users/{{u.id}}/delete"><button class="text-red-500 text-sm hover:underline">删除</button></form>
+    {% else %}<span class="text-xs text-slate-300">（当前登录）</span>{% endif %}
+  </div>
+  {% else %}<div class="px-4 py-6 text-slate-400 text-sm">暂无账号</div>{% endfor %}
+</div>
+{% endblock %}

@@ -1,0 +1,41 @@
+# Customer widget config. Copy this file to widget_config.yaml before running.
+backend_base_url: http://127.0.0.1:8000
+hook_base_url: http://127.0.0.1:30001
+
+tenant_id: 1
+login: demo
+password: demo12345
+
+# Must be the wxid of the logged-in WeChat account. Do not rely on GetSelfProfile.
+self_wxid: ""
+
+# For first dry run, set false. Set true after confirming the reply behavior.
+auto_send: false
+
+poll_interval_s: 0.75
+send_delay_min_s: 0.5
+send_delay_max_s: 1.5
+rate_per_min: 8
+daily_limit: 200
+handoff_reply: 帮您转接人工客服回复中，请稍等
+
+# AI 已处理的消息默认静默；真正转人工才通知。同一客户 30 秒内只提醒一次。
+notifications:
+  handoff: true
+  auto_reply: false
+  bring_to_front: false
+  cooldown_s: 30.0
+
+scope:
+  allow_private: true
+  # 企业客服推荐 selected：只处理会话页里明确勾选的客户；all 才处理所有私聊。
+  private_mode: selected
+  allow_group: false
+  group_trigger: at_me
+  group_whitelist: []
+  group_blocklist: []
+  contact_blocklist: []
+  contact_allowlist: []
+  # 在挂件会话页关闭「接待此客户」后会自动写入，格式为 channel|contact_id。
+  conversation_blocklist: []
+  conversation_allowlist: []

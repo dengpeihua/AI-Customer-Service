@@ -1,0 +1,29 @@
+{% extends "base.html" %}{% block body %}
+<h1 class="text-xl font-semibold mb-4">知识库管理</h1>
+{% if error %}
+<div class="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 mb-4 text-sm">{{error}}</div>
+{% endif %}
+<form method="post" action="/admin/kb" class="bg-white rounded-xl p-4 shadow-sm mb-4 space-y-2">
+  <input name="title" placeholder="标题" class="w-full border rounded px-3 py-2" required>
+  <textarea name="content" placeholder="内容" rows="3" class="w-full border rounded px-3 py-2" required></textarea>
+  <button class="bg-teal-600 text-white rounded px-4 py-2">新增文档</button>
+</form>
+<form method="post" action="/admin/kb/upload" enctype="multipart/form-data"
+      class="bg-white rounded-xl p-4 shadow-sm mb-4 space-y-2">
+  <input name="title" placeholder="标题（留空则用文件名）" class="w-full border rounded px-3 py-2">
+  <input type="file" name="file" accept=".txt,.md,.pdf,.docx" required
+         class="w-full border rounded px-3 py-2 text-sm">
+  <div class="flex items-center gap-3">
+    <button class="bg-teal-600 text-white rounded px-4 py-2">上传文件</button>
+    <span class="text-xs text-slate-400">支持 txt / md / pdf / docx，单文件 10 MB 以内</span>
+  </div>
+</form>
+<div class="bg-white rounded-xl shadow-sm divide-y">
+  {% for d in docs %}
+  <div class="flex items-center justify-between px-4 py-3">
+    <div><span class="font-medium">{{d.title}}</span> <span class="text-xs text-slate-400">{{d.source_type}} · {{d.status}}</span></div>
+    <form method="post" action="/admin/kb/{{d.id}}/delete"><button class="text-red-500 text-sm hover:underline">删除</button></form>
+  </div>
+  {% else %}<div class="px-4 py-6 text-slate-400 text-sm">暂无文档</div>{% endfor %}
+</div>
+{% endblock %}

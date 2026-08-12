@@ -1,0 +1,64 @@
+# Secrets and machine-local configuration
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+widget_config.yaml
+wecom_hook_config.yaml
+
+# Local databases, backups, logs, and application state
+*.db
+*.db-*
+*.db-journal
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.bak
+*.backup
+broadcast_tasks.json
+wecom_conversations.json
+widget_cursor.json
+logs/
+**/logs/
+output/
+tmp/
+mem/data/
+
+# Python environments and bundled runtimes
+.venv/
+venv/
+**/.venv/
+mem/.python/
+runtime/
+
+# Python caches, test output, and packaging artifacts
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.pyd
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+build/
+**/build/
+dist/
+*.egg-info/
+
+# Generated native artifacts
+native/build/
+
+# Downloadable third-party installers and local shortcuts
+assets/**/*.exe
+*.lnk
+
+# Editor and operating-system metadata
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini

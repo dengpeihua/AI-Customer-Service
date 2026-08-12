@@ -1,0 +1,22 @@
+{% extends "base.html" %}{% block body %}
+<h1 class="text-xl font-semibold mb-4">会话</h1>
+<div class="bg-white rounded-xl shadow-sm divide-y">
+  {% for c in convs %}
+  <a href="/admin/conversations/{{c.id}}" class="flex items-center justify-between px-4 py-3 hover:bg-slate-50">
+    <span class="font-medium">{{c.contact_id}}</span>
+    <span class="text-xs text-slate-400">{{c.channel}} · {{c.status}}</span>
+  </a>
+  {% else %}<div class="px-4 py-6 text-slate-400 text-sm">暂无会话</div>{% endfor %}
+</div>
+<div class="flex items-center justify-between mt-4 text-sm">
+  <span class="text-slate-400">共 {{total}} 个会话 · 第 {{page}} / {{pages}} 页</span>
+  <span class="flex gap-2">
+    {% if page > 1 %}
+    <a href="/admin/conversations?page={{page-1}}" class="border rounded px-3 py-1 hover:bg-slate-50">上一页</a>
+    {% endif %}
+    {% if page < pages %}
+    <a href="/admin/conversations?page={{page+1}}" class="border rounded px-3 py-1 hover:bg-slate-50">下一页</a>
+    {% endif %}
+  </span>
+</div>
+{% endblock %}

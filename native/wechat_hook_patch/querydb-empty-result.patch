@@ -1,0 +1,171 @@
+diff --git a/src/global.cpp b/src/global.cpp
+index 921dfb6..fc18287 100644
+--- a/src/global.cpp
++++ b/src/global.cpp
+@@ -13,7 +13,10 @@ HANDLE g_hAfterLoginInit = nullptr;
+ HMODULE g_hWeixinDll = nullptr;
+ HMODULE g_hWeixinExe = nullptr;
+ HWND    g_WeixinMainHwnd = nullptr;
+-volatile uint64_t g_IsLogin = 0;
++// The upstream login monitor never sets this flag. The project verifies the
++// owning pid/account before exposing the adapter, and the scanner below is safe
++// when no database handles exist, so the native QueryDB service can start ready.
++volatile uint64_t g_IsLogin = 1;
+ volatile uint64_t g_getprofile = 0;
+ CRITICAL_SECTION g_dbMgrCriticalSection;
+ 
+diff --git a/xdb/db_mgr.cpp b/xdb/db_mgr.cpp
+index 60bf5ba..d138e7b 100644
+--- a/xdb/db_mgr.cpp
++++ b/xdb/db_mgr.cpp
+@@ -4,16 +4,98 @@
+ #include "global.h"
+ #include "tools.h"
+ 
+-static void codec_get_key(sqlite3CodecGetKey func, sqlite3* db, int index, void** pKey, int* pLen) {
+-	__try {
+-		func(db, index, pKey, pLen);
++static void codec_get_key(sqlite3CodecGetKey func, sqlite3* db, int index, void** pKey, int* pLen) {
++	__try {
++		func(db, index, pKey, pLen);
+ 	}
+ 	__except (EXCEPTION_EXECUTE_HANDLER) {
+ 		//这里输出异常调试信息 
+-	}
+-}
+-
+-namespace xmgr {
++	}
++}
++
++static bool is_readable_range(const void* address, size_t size) {
++	if (address == nullptr || size == 0) {
++		return false;
++	}
++	MEMORY_BASIC_INFORMATION mbi = {};
++	if (VirtualQuery(address, &mbi, sizeof(mbi)) != sizeof(mbi) ||
++		mbi.State != MEM_COMMIT ||
++		(mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)) != 0) {
++		return false;
++	}
++	const uintptr_t start = reinterpret_cast<uintptr_t>(address);
++	const uintptr_t region_start = reinterpret_cast<uintptr_t>(mbi.BaseAddress);
++	const uintptr_t region_end = region_start + mbi.RegionSize;
++	return start >= region_start && start <= region_end && size <= region_end - start;
++}
++
++static bool is_likely_database_handle(LPVOID candidate, size_t expected_vfs) {
++	if ((reinterpret_cast<uintptr_t>(candidate) & (alignof(void*) - 1)) != 0 ||
++		!is_readable_range(candidate, 0x38)) {
++		return false;
++	}
++	bool valid = false;
++	__try {
++		const BYTE* bytes = static_cast<const BYTE*>(candidate);
++		const uintptr_t actual_vfs = *reinterpret_cast<const uintptr_t*>(bytes);
++		const void* default_collation = *reinterpret_cast<void* const*>(bytes + 0x10);
++		const void* databases = *reinterpret_cast<void* const*>(bytes + 0x20);
++		const int database_count = *reinterpret_cast<const int*>(bytes + 0x28);
++		valid = actual_vfs == expected_vfs &&
++			database_count > 0 && database_count <= 64 &&
++			is_readable_range(default_collation, sizeof(void*)) &&
++			is_readable_range(databases, sizeof(void*));
++	}
++	__except (EXCEPTION_EXECUTE_HANDLER) {
++		valid = false;
++	}
++	return valid;
++}
++
++static bool try_get_database_path(sqlite3_api_routines* routines, sqlite3* db,
++	char* output, size_t output_size) {
++	if (routines == nullptr || db == nullptr || output == nullptr || output_size < 2) {
++		return false;
++	}
++	output[0] = '\0';
++	sqlite3_stmt* stmt = nullptr;
++	bool found = false;
++	bool faulted = false;
++	__try {
++		if (routines->prepare(db, "PRAGMA database_list", -1, &stmt, nullptr) == SQLITE_OK &&
++			stmt != nullptr) {
++			while (routines->step(stmt) == SQLITE_ROW) {
++				if (routines->column_count(stmt) < 3) {
++					continue;
++				}
++				const int length = routines->column_bytes(stmt, 2);
++				const unsigned char* text = routines->column_text(stmt, 2);
++				if (length <= 0 || static_cast<size_t>(length) >= output_size ||
++					!is_readable_range(text, static_cast<size_t>(length))) {
++					continue;
++				}
++				memcpy(output, text, static_cast<size_t>(length));
++				output[length] = '\0';
++				found = true;
++				break;
++			}
++		}
++	}
++	__except (EXCEPTION_EXECUTE_HANDLER) {
++		faulted = true;
++	}
++	if (stmt != nullptr) {
++		__try {
++			routines->finalize(stmt);
++		}
++		__except (EXCEPTION_EXECUTE_HANDLER) {
++			faulted = true;
++		}
++	}
++	return found && !faulted;
++}
++
++namespace xmgr {
+ 
+ 	static std::string toHexString(const std::string& str)
+ 	{
+@@ -200,21 +282,22 @@ namespace xmgr {
+ 		std::vector<LPVOID> results;
+ 		size_t vfs_addr = (size_t)g_hWeixinDll + XWECHAT_SQLITE3_VFS_OFFSET;
+ 		ScanPattern(GetCurrentProcess(), (BYTE*)&vfs_addr, sizeof(LPVOID), results);
+-		for (size_t i = 0; i < results.size(); i++) {
+-			auto result = results[i];
+-			if (IsBadReadPtr(result, sizeof(LPVOID)) == 0) {
+-				int rc = m_sqlite3Rountines->errcode(result);
+-				if (rc == SQLITE_OK) {
+-					nlohmann::ordered_json queryResult = execute(result, "PRAGMA database_list");
+-					std::string dbpath = queryResult["data"][0]["file"].get<std::string>();
+-					if (dbpath.empty())
+-						continue;
+-					auto pos = dbpath.find_last_of("\\");
+-					std::string dbname = dbpath.substr(pos + 1);
+-					m_dbs[dbname] = result;
+-				}
+-			}
+-		}
++		for (size_t i = 0; i < results.size(); i++) {
++			auto result = results[i];
++			if (!is_likely_database_handle(result, vfs_addr)) {
++				continue;
++			}
++			char dbpath_buffer[4096] = {};
++			if (!try_get_database_path(
++				m_sqlite3Rountines, static_cast<sqlite3*>(result),
++				dbpath_buffer, sizeof(dbpath_buffer))) {
++				continue;
++			}
++			std::string dbpath(dbpath_buffer);
++			auto pos = dbpath.find_last_of("\\");
++			std::string dbname = dbpath.substr(pos + 1);
++			m_dbs[dbname] = result;
++		}
+ 		return m_dbs;
+ 	}
+ 
+@@ -250,4 +333,4 @@ namespace xmgr {
+ 		}
+ 		return jdbs;
+ 	}
+-}
+\ No newline at end of file
++}
