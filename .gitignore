@@ -8,6 +8,24 @@
 widget_config.yaml
 wecom_hook_config.yaml
 
+# Private keys, certificates containing private material, and credential exports
+*.key
+*.pem
+*.p12
+*.pfx
+*.ppk
+*.jks
+*.keystore
+id_rsa*
+id_ed25519*
+credentials*.json
+client_secret*.json
+application_default_credentials.json
+service-account*.json
+service_account*.json
+.secrets/
+secrets/
+
 # Local databases, backups, logs, and application state
 *.db
 *.db-*
