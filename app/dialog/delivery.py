@@ -79,7 +79,7 @@ def update_delivery_status(
         Message.direction == "out",
     )
     if delivery_status == "sending":
-        # 只有一个调用方能把可恢复状态抢占为 sending；其余并发恢复者 changed=False，禁止发微信。
+        # 只有一个调用方能把可恢复状态抢占为 sending；其余并发恢复者 changed=False，禁止发抖音私信。
         statement = statement.where(or_(
             Message.delivery_status.is_(None),
             Message.delivery_status.in_(("pending", "failed", "draft")),

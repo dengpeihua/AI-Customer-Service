@@ -6,8 +6,7 @@
 - dismiss_pending(pending_id)：不回复，只标记这一条处理完。
 - send(contact, text, channel)：普通人工发送，不隐式清空任何待办。
 
-双渠道：个人微信的待办走个人微信桥、企微的待办走企微桥，绝不串台。channel 缺省=hub 默认渠道
-（单渠道旧行为）。与 GUI 解耦，便于单测；浮窗只调这几个方法。
+多个抖音账号按 channel 回到各自适配器，绝不串台。与 GUI 解耦，便于单测。
 """
 from __future__ import annotations
 
@@ -19,6 +18,7 @@ class HandoffController:
         self.hub = hub                  # ChannelHub：按 channel 路由 adapter/pipeline
         self.state = state              # RuntimeState（pending / 计数）
         self._on_changed = on_changed or (lambda: None)
+        self.last_error = ""
 
     def set_on_changed(self, callback) -> None:
         self._on_changed = callback or (lambda: None)
@@ -29,13 +29,25 @@ class HandoffController:
 
     def _send(self, contact_id: str, text: str, channel: str | None,
               reply_to: dict | None) -> bool:
+        self.last_error = ""
         if not text or not text.strip():
+            self.last_error = "回复内容为空"
+            return False
+        checker = getattr(self.state, "has_uncertain_delivery", None)
+        if callable(checker) and checker(contact_id, channel):
+            self.last_error = "上一条消息的投递结果仍在确认中，为避免重复发送已暂停"
             return False
         adapter = self.hub.adapter(channel)
         if adapter is None:
+            self.last_error = "找不到该待办对应的抖音账号通道"
             return False
-        res = send_reply(adapter, contact_id, text, reply_to, provenance="human")
+        try:
+            res = send_reply(adapter, contact_id, text, reply_to, provenance="human")
+        except Exception as exc:  # noqa: BLE001 - surface the channel failure in the UI
+            self.last_error = str(exc)[:500] or "渠道发送异常"
+            return False
         if not res.ok:
+            self.last_error = str(getattr(res, "error", "") or "渠道未返回成功回执")[:500]
             return False
         self.state.record_agent_reply(contact_id, text)
         if reply_to:
@@ -46,9 +58,14 @@ class HandoffController:
         """发送普通人工消息；公开入口没有引用参数，确保非待办消息永不引用。"""
         return self._send(contact_id, text, channel, reply_to=None)
 
-    def reply_pending(self, pending_id: str, text: str) -> bool:
+    def reply_pending(self, pending_id: str, text: str, *, notify: bool = True) -> bool:
+        self.last_error = ""
         item = self.state.find_pending(pending_id)
         if item is None:
+            self.last_error = "这条待办已不存在，请刷新列表"
+            return False
+        if item.get("kind") in {"delivery_uncertain", "delivery_waiting"}:
+            self.last_error = "上一条消息的投递结果仍在确认中，为避免重复发送已暂停"
             return False
         contact_id = str(item.get("contact") or "")
         channel = str(item.get("channel") or "")
@@ -58,8 +75,13 @@ class HandoffController:
         if pipe is not None:
             pipe.release_contact(contact_id)
         self.state.remove_pending(pending_id)
-        self._on_changed()
+        if notify:
+            self.notify_changed()
         return True
+
+    def notify_changed(self) -> None:
+        """Notify UI observers after the caller has returned to the GUI thread."""
+        self._on_changed()
 
     def reply(self, contact_id: str, text: str, channel: str | None = None) -> bool:
         """Compatibility path: complete only the oldest matching pending item."""

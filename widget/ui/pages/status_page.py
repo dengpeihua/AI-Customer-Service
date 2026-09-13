@@ -19,11 +19,11 @@ class StatusPage(QWidget):
         lay.addWidget(self._status)
         self._counts = QLabel()
         lay.addWidget(self._counts)
-        self._auto = QCheckBox("自动发送总闸（关闭时 AI 只生成草稿，不会发给微信）")
+        self._auto = QCheckBox("自动回复总闸（关闭时 AI 只生成草稿，不会发送抖音私信）")
         self._auto.setChecked(state.cfg.auto_send)
         self._auto.clicked.connect(self._toggle_auto)
         lay.addWidget(self._auto)
-        self._priv = QCheckBox("回私聊")
+        self._priv = QCheckBox("处理个人号私信")
         self._priv.setChecked(state.cfg.scope.allow_private)
         self._priv.clicked.connect(lambda: state.set_scope(allow_private=self._priv.isChecked()))
         lay.addWidget(self._priv)
@@ -35,7 +35,7 @@ class StatusPage(QWidget):
             )
         )
         lay.addWidget(self._selected_only)
-        self._grp = QCheckBox("回群聊")
+        self._grp = QCheckBox("处理群组消息（抖音渠道不使用）")
         self._grp.setChecked(state.cfg.scope.allow_group)
         self._grp.clicked.connect(lambda: state.set_scope(allow_group=self._grp.isChecked()))
         lay.addWidget(self._grp)
@@ -66,17 +66,16 @@ class StatusPage(QWidget):
 
     def refresh(self) -> None:
         s = self.state
-        hook_detail = s.hook_base_url
+        hook_detail = "抖音网页私信通道"
         if not s.hook_ok and s.hook_error:
             hook_detail = f"{hook_detail} | {s.hook_error[:160]}"
         backend_detail = "OK" if s.backend_ok else "X"
         if not s.backend_ok and s.backend_error:
             backend_detail = f"X | {s.backend_error[:120]}"
         self._status.setText(
-            f"微信版本: {s.wechat_version or '-'}\n"
-            f"hook: {'OK' if s.hook_ok else 'X'}   {hook_detail}\n"
+            f"channel: {'OK' if s.hook_ok else 'X'}   {hook_detail}\n"
             f"backend: {backend_detail}\n"
-            f"wxid: {s.self_wxid or '-'}"
+            f"抖音账号 ID: {s.self_wxid or '-'}"
         )
         rc, sc = s.today_counts()
         self._counts.setText(f"今日 收 {rc} / 发 {sc}")

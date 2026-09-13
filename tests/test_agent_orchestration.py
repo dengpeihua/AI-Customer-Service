@@ -130,7 +130,7 @@ class AgentRunnerTests(unittest.TestCase):
             db=MagicMock(),
             retrieval_llm=MagicMock(),
             tenant_id=7,
-            channel="wechat_personal",
+            channel="douyin#shop_a",
             contact_id="wxid_friend",
             query="多久发货？",
             tone_instruction="温暖、简洁",
@@ -160,7 +160,8 @@ class AgentRunnerTests(unittest.TestCase):
                 "app.dialog.agent_orchestrator.retrieve",
                 return_value=[
                     {"text": "付款后 48 小时内发货。", "distance": 0.1},
-                    {"text": "不相关内容", "distance": 0.8},
+                    {"text": "全国包邮。", "distance": 0.57},
+                    {"text": "不相关内容", "distance": 0.78},
                 ],
             ) as retrieve_mock,
             patch("app.dialog.agent_orchestrator.Runner.run", new=AsyncMock(side_effect=fake_run)),
@@ -173,7 +174,13 @@ class AgentRunnerTests(unittest.TestCase):
 
         self.assertEqual(AFTER_SALES_ROUTE, result.route)
         self.assertEqual("付款后 48 小时内发货。", result.reply_text)
-        self.assertEqual([{"text": "付款后 48 小时内发货。", "distance": 0.1}], result.kb_hits)
+        self.assertEqual(
+            [
+                {"text": "付款后 48 小时内发货。", "distance": 0.1},
+                {"text": "全国包邮。", "distance": 0.57},
+            ],
+            result.kb_hits,
+        )
         self.assertEqual("需要查询发货规则", result.reason)
         retrieve_mock.assert_called_once_with(
             context.db, context.retrieval_llm, 7, "多久发货？", 4,
@@ -210,6 +217,169 @@ class AgentRunnerTests(unittest.TestCase):
 
                 self.assertEqual(expected_route, result.route)
                 self.assertEqual("测试路由", result.reason)
+
+    def test_clear_pet_and_emotion_sharing_is_recovered_from_false_human_route(self) -> None:
+        messages = (
+            "我有一只小狗叫麻将",
+            "我心情不好的时候超级喜欢和我的小猫麻将玩",
+        )
+        for message in messages:
+            with self.subTest(message=message):
+                context = self._context()
+                context.query = message
+                calls = []
+
+                async def fake_run(starting_agent, *, input, context, **_kwargs):
+                    del input
+                    calls.append(starting_agent.name)
+                    if starting_agent.name == "Triage Agent":
+                        target = next(
+                            item for item in starting_agent.handoffs
+                            if item.tool_name == "transfer_to_human_agent"
+                        )
+                        agent = await target.on_invoke_handoff(
+                            SimpleNamespace(context=context),
+                            '{"reason":"表达含混","summary":"客户提到麻将"}',
+                        )
+                        return SimpleNamespace(last_agent=agent, final_output="转人工")
+                    self.assertEqual("Chitchat Agent", starting_agent.name)
+                    return SimpleNamespace(
+                        last_agent=starting_agent,
+                        final_output="麻将听起来是你很重要的小伙伴。",
+                    )
+
+                with patch(
+                    "app.dialog.agent_orchestrator.Runner.run",
+                    new=AsyncMock(side_effect=fake_run),
+                ):
+                    result = run_customer_service_agents(
+                        context,
+                        [{"role": "user", "content": message}],
+                        model="test-model",
+                    )
+
+                self.assertEqual(["Triage Agent", "Chitchat Agent"], calls)
+                self.assertEqual(CHITCHAT_ROUTE, result.route)
+                self.assertIn("小伙伴", result.reply_text)
+
+    def test_business_question_is_recovered_from_false_human_route_when_kb_matches(self) -> None:
+        context = self._context()
+        context.query = "你们几点营业"
+        calls = []
+
+        async def fake_run(starting_agent, *, input, context, **_kwargs):
+            del input
+            calls.append(starting_agent.name)
+            if starting_agent.name == "Triage Agent":
+                target = next(
+                    item for item in starting_agent.handoffs
+                    if item.tool_name == "transfer_to_human_agent"
+                )
+                agent = await target.on_invoke_handoff(
+                    SimpleNamespace(context=context),
+                    '{"reason":"信息不足","summary":"客户询问营业时间"}',
+                )
+                return SimpleNamespace(last_agent=agent, final_output="转人工")
+            self.assertEqual("After Sales Agent", starting_agent.name)
+            return SimpleNamespace(
+                last_agent=starting_agent,
+                final_output="本店每天上午9点到晚上21点营业。",
+            )
+
+        with (
+            patch(
+                "app.dialog.agent_orchestrator.retrieve",
+                return_value=[{
+                    "text": "营业时间。本店每天上午9点到晚上21点营业。",
+                    "distance": 0.25,
+                }],
+            ) as retrieve_mock,
+            patch(
+                "app.dialog.agent_orchestrator.Runner.run",
+                new=AsyncMock(side_effect=fake_run),
+            ),
+        ):
+            result = run_customer_service_agents(
+                context,
+                [{"role": "user", "content": context.query}],
+                model="test-model",
+            )
+
+        self.assertEqual(["Triage Agent", "After Sales Agent"], calls)
+        self.assertEqual(AFTER_SALES_ROUTE, result.route)
+        self.assertIn("9点", result.reply_text)
+        self.assertIn("知识库", result.reason)
+        retrieve_mock.assert_called_once()
+
+    def test_explicit_human_request_is_not_overridden_by_kb_recovery(self) -> None:
+        context = self._context()
+        context.query = "我要找真人客服"
+
+        async def fake_run(starting_agent, *, input, context, **_kwargs):
+            del input
+            target = next(
+                item for item in starting_agent.handoffs
+                if item.tool_name == "transfer_to_human_agent"
+            )
+            agent = await target.on_invoke_handoff(
+                SimpleNamespace(context=context),
+                '{"reason":"客户要求真人","summary":"转接真人客服"}',
+            )
+            return SimpleNamespace(last_agent=agent, final_output="转人工")
+
+        with (
+            patch("app.dialog.agent_orchestrator.retrieve") as retrieve_mock,
+            patch(
+                "app.dialog.agent_orchestrator.Runner.run",
+                new=AsyncMock(side_effect=fake_run),
+            ),
+        ):
+            result = run_customer_service_agents(
+                context,
+                [{"role": "user", "content": context.query}],
+                model="test-model",
+            )
+
+        self.assertEqual(HUMAN_ROUTE, result.route)
+        retrieve_mock.assert_not_called()
+
+    def test_business_or_high_risk_pet_message_is_not_forced_to_chitchat(self) -> None:
+        messages = (
+            "你们这款小狗玩具怎么退款？",
+            "我心情不好，想伤害自己",
+            "我想找真人客服聊聊我家的小猫",
+        )
+        for message in messages:
+            with self.subTest(message=message):
+                context = self._context()
+                context.query = message
+                calls = []
+
+                async def fake_run(starting_agent, *, input, context, **_kwargs):
+                    del input
+                    calls.append(starting_agent.name)
+                    target = next(
+                        item for item in starting_agent.handoffs
+                        if item.tool_name == "transfer_to_human_agent"
+                    )
+                    agent = await target.on_invoke_handoff(
+                        SimpleNamespace(context=context),
+                        '{"reason":"需要人工处理","summary":"不能自动处理"}',
+                    )
+                    return SimpleNamespace(last_agent=agent, final_output="转人工")
+
+                with patch(
+                    "app.dialog.agent_orchestrator.Runner.run",
+                    new=AsyncMock(side_effect=fake_run),
+                ):
+                    result = run_customer_service_agents(
+                        context,
+                        [{"role": "user", "content": message}],
+                        model="test-model",
+                    )
+
+                self.assertEqual(["Triage Agent"], calls)
+                self.assertEqual(HUMAN_ROUTE, result.route)
 
     def test_legacy_route_hints_cannot_bypass_triage(self) -> None:
         for legacy_hint in (AFTER_SALES_ROUTE, CHITCHAT_ROUTE, HUMAN_ROUTE):

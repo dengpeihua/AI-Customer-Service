@@ -99,14 +99,14 @@ def summarize_to_kb(body: SummarizeIn, user: CurrentUser, db: Annotated[Session,
 
 class SummarizeTextsIn(BaseModel):
     texts: list[str]
-    title: str = "企微本地历史反哺"
+    title: str = "渠道历史反哺"
 
 
 @router.post("/summarize-texts", response_model=SummarizeOut)
 def summarize_texts(body: SummarizeTextsIn, user: CurrentUser,
                     db: Annotated[Session, Depends(get_db)]):
-    """把企微本地库收割的历史消息文本提炼成 FAQ 反哺知识库（LLM 蒸馏，非裸转储）。
-    供挂件「拉取企微历史 → 反哺」按钮调用。租户隔离由 CurrentUser 保证。"""
+    """把渠道历史消息文本提炼成 FAQ 反哺知识库（LLM 蒸馏，非裸转储）。
+    租户隔离由 CurrentUser 保证。"""
     try:
         doc = summarize_texts_to_kb(db, get_llm(), tenant_id=user.tenant_id,
                                     texts=body.texts, title=body.title)

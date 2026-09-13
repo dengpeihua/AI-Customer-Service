@@ -23,7 +23,7 @@ class WorkbenchWindow(QWidget):
                  avatar_provider=None, adapter=None, history_tasks_path="", history_source=None,
                   history_channels=None, history_adapter_for=None, memory_bridge_for=None,
                   history_default_channel="",
-                  instances_page=None, version_page=None, labels=None,
+                 instances_page=None, version_page=None, douyin_page=None, labels=None,
                   app_icon: QIcon | None = None):
         super().__init__()
         self.setObjectName("Workbench")
@@ -40,7 +40,7 @@ class WorkbenchWindow(QWidget):
                                         labels=labels)
         # 「会话」= 主页面：真实聊天（读全量历史）+ 人工发消息 + 会话级 AI 托管开关 + 渠道切换。
         # controller 用于人工回复时按渠道路由并释放待人工（缺省则退化为 adapter 直发）；
-        # history_channels/adapter_for 给了则渲染渠道下拉，可在个人微信/企微间切换。
+        # history_channels/adapter_for 给了则渲染渠道下拉，可在抖音账号间切换。
         self.history_page = HistoryPage(bridge, adapter=adapter, avatar_provider=avatar_provider,
                                         tasks_path=history_tasks_path, source=history_source,
                                         on_followed=self._on_followed, controller=controller,
@@ -73,10 +73,13 @@ class WorkbenchWindow(QWidget):
         self.tasks_page = tasks_page
         self.instances_page = instances_page
         self.version_page = version_page
+        self.douyin_page = douyin_page
 
         spec = []                                   # (name, label, page)
         spec.append(("history", "会话中心", self.history_page))
         spec.append(("handoff", "待人工", self.handoff_page))
+        if douyin_page is not None:
+            spec.append(("douyin", "抖音私信", douyin_page))
         spec.append(("memory_conversation", "记忆对话", self.memory_conversation_page))
         spec.append(("long_term_memory", "长期记忆", self.long_term_memory_page))
         spec.append(("memory_recall", "记忆召回", self.memory_page))
@@ -120,7 +123,7 @@ class WorkbenchWindow(QWidget):
         self._nav_labels: dict[str, str] = {}
         self._page_labels: dict[str, str] = {}
         group_for = {
-            "history": "客户服务", "handoff": "客户服务",
+            "history": "客户服务", "handoff": "客户服务", "douyin": "抖音",
             "memory_conversation": "记忆", "long_term_memory": "记忆",
             "memory_recall": "记忆", "memory_governance": "记忆",
             "broadcast": "营销触达", "tasks": "营销触达",
@@ -246,15 +249,16 @@ class WorkbenchWindow(QWidget):
     def _update_header(self, name: str) -> None:
         subtitles = {
             "history": "实时接待、人工协同与客户上下文",
-            "memory_conversation": "从真实微信好友聊天中提取和更新记忆",
+            "memory_conversation": "从真实抖音私信中提取和更新记忆",
             "long_term_memory": "查看由长期记忆形成的用户画像",
-            "memory_recall": "按好友隔离检索、解释分数与召回证据",
+            "memory_recall": "按私信用户隔离检索、解释分数与召回证据",
             "memory_governance": "审阅、置顶、修订与同步删除记忆",
             "handoff": "集中处理需要人工介入的会话",
+            "douyin": "查看个人号登录、私信扫描与发送保护状态",
             "broadcast": "安全触达客户并控制发送节奏",
             "tasks": "跟踪群发任务、失败项与重试进度",
             "status": "查看连接健康度并调整运行策略",
-            "instances": "管理微信与企业微信运行实例",
+            "instances": "管理抖音运行实例",
             "version": "核对客户端版本与兼容状态",
             "worker_tasks": "跟踪后台任务状态、耗时与结果",
             "data_browser": "只读浏览当前租户的白名单数据",
@@ -277,7 +281,7 @@ class WorkbenchWindow(QWidget):
         self._goto("handoff"); show_front(self)
 
     def _on_followed(self) -> None:
-        # 后台消息/微信活跃会话变化只更新内部视图，不抢占用户正在使用的窗口焦点。
+        # 后台消息/抖音私信活跃会话变化只更新内部视图，不抢占用户正在使用的窗口焦点。
         # 真正需要人工时由通知策略决定是否打开「待人工」页。
         self._goto("history")
 

@@ -15,7 +15,7 @@ class _LiveMem0:
     def health(self):
         return {
             "status": "ok", "mode": "local-oss", "mem0_version": "1.0",
-            "collection": "memories_dashscope_1024",
+            "collection": "memories_minimax_embo_01_1536",
         }
 
     def search(self, query: str, *, user_id: str, limit: int, filters=None):

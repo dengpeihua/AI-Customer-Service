@@ -40,7 +40,7 @@ class LongTermMemoryPage(_AsyncPage):
         self._contacts_box.currentIndexChanged.connect(self._contact_changed)
         self._channel = QComboBox()
         channel_rows = self._channels or [
-            ("wechat_personal", "个人微信"), ("wecom_hook", "企业微信"), ("wecom", "企业微信 API")
+            ("douyin#default", "抖音")
         ]
         for key, label in channel_rows:
             self._channel.addItem(label, key)
@@ -155,7 +155,7 @@ class LongTermMemoryPage(_AsyncPage):
         row = self._contacts_box.itemData(index)
         if not isinstance(row, dict):
             return
-        channel = str(row.get("channel") or "wechat_personal")
+        channel = str(row.get("channel") or "douyin#default")
         index = self._channel.findData(channel)
         if index < 0:
             self._channel.addItem(self._labels.get(channel, channel), channel)

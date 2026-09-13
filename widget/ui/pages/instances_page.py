@@ -3,7 +3,7 @@ from typing import Callable, Optional
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTableWidget,
                                QTableWidgetItem, QCheckBox, QPushButton, QHeaderView)
 
-_PLATFORM_LABEL = {"wecom": "企微", "wechat": "微信"}
+_PLATFORM_LABEL = {"douyin": "抖音"}
 
 class InstancesConsolePage(QWidget):
     def __init__(self, supervisor, *, on_open_chat: Optional[Callable[[str], None]] = None,
@@ -19,10 +19,8 @@ class InstancesConsolePage(QWidget):
         top = QHBoxLayout()
         t = QLabel("实例"); t.setObjectName("Title"); top.addWidget(t)
         top.addStretch(1)
-        b = QPushButton("+ 新建企微"); b.setObjectName("Primary")
-        b.clicked.connect(lambda: self._on_new("wecom")); top.addWidget(b)
-        bw = QPushButton("+ 新建微信"); bw.setObjectName("Ghost")
-        bw.clicked.connect(lambda: self._on_new("wechat")); top.addWidget(bw)
+        b = QPushButton("+ 新建抖音账号"); b.setObjectName("Primary")
+        b.clicked.connect(lambda: self._on_new("douyin")); top.addWidget(b)
         lay.addLayout(top)
         self._banner = QLabel(""); self._banner.setObjectName("Muted"); lay.addWidget(self._banner)
         self._table = QTableWidget(0, 6)

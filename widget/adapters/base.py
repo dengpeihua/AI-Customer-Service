@@ -3,7 +3,7 @@ from typing import Callable, Protocol
 from widget.models import InboundMsg, SendResult
 
 class ChannelAdapter(Protocol):
-    channel: str  # 每账号唯一 channel_key（如 wechat#boss）；legacy 兼容行为旧平台常量
+    channel: str  # 每个抖音账号唯一 channel_key（如 douyin#account_a）
     def start(self, on_message: Callable[[InboundMsg], None]) -> None: ...
     def send_message(self, contact_id: str, text: str, provenance: str = "human") -> SendResult: ...
     def send_reply(self, contact_id: str, text: str, reply_to: InboundMsg,

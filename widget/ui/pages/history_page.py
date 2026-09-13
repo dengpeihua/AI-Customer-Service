@@ -2,24 +2,27 @@ from __future__ import annotations
 import datetime as dt
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
+from urllib.parse import urlsplit
+
+import httpx
 from PySide6.QtCore import Qt, QSize, QTimer, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QIcon
+from PySide6.QtGui import QDesktopServices, QIcon, QPixmap
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                                QListWidget, QListWidgetItem, QPushButton, QScrollArea,
                                QMessageBox, QCheckBox, QLineEdit, QComboBox)
 from widget.bridge import Bridge, BridgeError
 from widget.ui.pages.customer_profile_dialog import CustomerProfileDialog
-from widget.ui.message_content import message_content_widget
-from widget.wechat_media import message_signature
+from widget.ui.message_content import RemoteImageLabel, message_content_widget
+from widget.message_media import is_standard_image, message_signature
 from widget.live_conversation import (
     event_to_history_message,
-    merge_history_snapshots,
     merge_live_messages,
 )
 
 # 消息来源标记：文字 + 颜色。客户=对方；我方出向按 AI记录/群发记录/都无 分三类。
 _SOURCE_TAG = {
     "customer": ("客户", "#2A78D6"),
+    "system": ("系统", "#68757D"),
     "ai": ("AI 自动", "#12B3A6"),
     "broadcast": ("群发", "#8064A2"),
     "agent": ("人工", "#E0A100"),
@@ -27,9 +30,9 @@ _SOURCE_TAG = {
 
 
 class HistoryPage(QWidget):
-    """聊天记录 = 真实微信聊天（读消息库），叠加 AI/人工来源标记。
+    """聊天记录 = 真实抖音私信聊天（读消息库），叠加 AI/人工来源标记。
 
-    左侧：微信最近私聊会话；右侧：选中联系人的真实完整聊天。我方每条出向消息
+    左侧：抖音私信最近私聊会话；右侧：选中联系人的真实完整聊天。我方每条出向消息
     去后端比对：文本命中后端 AI 回复集 → 标「AI 自动」，否则「人工」。
     """
 
@@ -37,6 +40,7 @@ class HistoryPage(QWidget):
     _tick_ready = Signal(object)
     _chat_ready = Signal(object)
     _ai_state_ready = Signal(object)
+    _session_avatar_ready = Signal(object)
 
     def __init__(self, bridge: Bridge, adapter=None, avatar_provider=None, on_open_chat=None,
                  tasks_path: str = "", source=None, on_followed=None, controller=None,
@@ -51,7 +55,7 @@ class HistoryPage(QWidget):
         self.source = source                  # ContactSource，渲染群发文案变量用
         self.on_followed = on_followed         # 跟随切换时通知外层把本页切到前台
         # 多渠道：channels=[(key,label),...] + adapter_for(key)->adapter（如 hub.adapter，实时解析
-        # 便于重连后拿到新 adapter）。给了就在标题行渲染渠道下拉、可在个人微信/企微间切换；否则单
+        # 便于重连后拿到新 adapter）。给了就在标题行渲染抖音账号下拉；否则单
         # 渠道（adapter 直用），行为与老式一致。
         self._adapter_for = adapter_for
         self._channels: list = list(channels or [])
@@ -66,9 +70,11 @@ class HistoryPage(QWidget):
         self._names: dict[str, str] = {}     # wxid -> 显示名（备注/昵称）
         self._current_wxid: str = ""
         self._profile_dialog = None
-        self._last_active: str = ""      # 上次探到的微信活跃会话；只在它变化时才跟随
+        self._last_active: str = ""      # 上次探到的抖音私信活跃会话；只在它变化时才跟随
         self._last_msgs: list = []       # 当前会话已渲染的消息签名，用于实时刷新时判断有无变化
         self._message_avatar_labels: dict[str, list[tuple[QLabel, str]]] = {}
+        self._remote_avatar_cache: dict[str, QPixmap] = {}
+        self._remote_avatar_loading: set[tuple[str, str]] = set()
         self._conversation_cache: dict[tuple[str, str], list[dict]] = {}
         self._live_messages: dict[tuple[str, str], list[dict]] = {}
         self._chat_generation = 0
@@ -99,9 +105,10 @@ class HistoryPage(QWidget):
             top.addWidget(self._channel_combo)
         lay.addLayout(top)
         body = QHBoxLayout(); lay.addLayout(body, 1)
-        # 左：微信会话列表
+        # 左：抖音私信会话列表
         left = QVBoxLayout(); body.addLayout(left, 1)
         self._list = QListWidget(); self._list.currentRowChanged.connect(self._open_row)
+        self._list.itemClicked.connect(self._open_clicked_item)
         self._list.itemDoubleClicked.connect(self._open_profile)
         self._list.setIconSize(QSize(32, 32))
         left.addWidget(self._list, 1)
@@ -158,6 +165,7 @@ class HistoryPage(QWidget):
         self._tick_ready.connect(self._apply_tick)
         self._chat_ready.connect(self._apply_chat_read)
         self._ai_state_ready.connect(self._apply_ai_state)
+        self._session_avatar_ready.connect(self._apply_session_avatar)
         if defer_initial_load:
             self._list.addItem("（正在加载会话…）")
         else:
@@ -169,7 +177,7 @@ class HistoryPage(QWidget):
         if self.adapter is None:
             self._list.clear()
             self._sessions = []
-            self._list.addItem("（未连接微信）")
+            self._list.addItem("（未连接抖音私信）")
             return
         # 防御纵深：只接受真正的 list（预取数据）。收到 None / bool / 其它任何非 list 都当「没传」
         # 处理、重新拉取——绝不把非 list 存进 self._sessions，否则后续迭代它会崩（见 line 81 注释）。
@@ -214,16 +222,24 @@ class HistoryPage(QWidget):
         self._sessions = sessions
         if not self._sessions:
             reason = str(getattr(self.adapter, "reason", "") or "").strip()
-            self._list.addItem(f"（微信连接不可用）\n{reason}" if reason else "（暂无会话）")
+            self._list.addItem(f"（抖音私信连接不可用）\n{reason}" if reason else "（暂无会话）")
             return
         self._names = names if names is not None else self._resolve_names(
             [s["wxid"] for s in self._sessions])
         for s in self._sessions:
             name = self._names.get(s["wxid"], s["wxid"])
             item = QListWidgetItem(f"{name}\n{s.get('summary', '')[:24]}")
-            if self.avatars is not None:
+            avatar_path = str(s.get("avatar") or "")
+            avatar_url = str(s.get("avatar_url") or "")
+            if is_standard_image(avatar_path):
+                item.setIcon(QIcon(QPixmap(avatar_path)))
+            elif avatar_url in self._remote_avatar_cache:
+                item.setIcon(QIcon(self._remote_avatar_cache[avatar_url]))
+            elif self.avatars is not None:
                 item.setIcon(QIcon(self.avatars.get_pixmap(s["wxid"], name)))
             self._list.addItem(item)
+            if avatar_url and avatar_url not in self._remote_avatar_cache:
+                self._queue_session_avatar(str(s["wxid"]), avatar_url)
         # 启动进入“会话”页时直接展示最近一位客户的聊天，不要求用户先去待人工回复或手动点行。
         # 刷新时若当前会话仍存在则保持它，否则回到最近会话（SessionTable 已按时间倒序）。
         if select_first:
@@ -277,6 +293,16 @@ class HistoryPage(QWidget):
             self._stick_bottom = True        # 手动点开一个会话：看最新
             self._request_chat(self._sessions[i]["wxid"])
 
+    def _open_clicked_item(self, item) -> None:
+        """已高亮行再次点击时也校正详情，避免 currentRowChanged 不触发。"""
+        index = self._list.row(item)
+        if not (0 <= index < len(self._sessions)):
+            return
+        contact_id = str(self._sessions[index].get("wxid") or "")
+        if contact_id and contact_id != self._current_wxid:
+            self._stick_bottom = True
+            self._request_chat(contact_id)
+
     def _on_avatar_ready(self, wxid: str) -> None:
         for i, s in enumerate(self._sessions):
             if s.get("wxid") == wxid:
@@ -287,7 +313,83 @@ class HistoryPage(QWidget):
         for label, name in self._message_avatar_labels.get(wxid, []):
             label.setPixmap(self.avatars.get_pixmap(wxid, name))
 
-    # ---------- 渠道切换（个人微信 / 企微） ----------
+    def _queue_session_avatar(self, contact_id: str, url: str) -> None:
+        key = (contact_id, url)
+        if key in self._remote_avatar_loading:
+            return
+        try:
+            parsed = urlsplit(url)
+        except ValueError:
+            return
+        host = (parsed.hostname or "").lower()
+        allowed = any(
+            host == suffix or host.endswith(f".{suffix}")
+            for suffix in ("douyinpic.com", "byteimg.com", "ibytedtos.com")
+        )
+        if parsed.scheme.lower() != "https" or not allowed:
+            return
+        self._remote_avatar_loading.add(key)
+
+        def worker() -> None:
+            data = None
+            try:
+                with httpx.Client(timeout=8.0, follow_redirects=True, trust_env=False) as client:
+                    with client.stream("GET", url) as response:
+                        response.raise_for_status()
+                        final_host = (response.url.host or "").lower()
+                        final_allowed = any(
+                            final_host == suffix or final_host.endswith(f".{suffix}")
+                            for suffix in (
+                                "douyinpic.com", "byteimg.com", "ibytedtos.com",
+                            )
+                        )
+                        if response.url.scheme != "https" or not final_allowed:
+                            raise ValueError("avatar redirect left the approved Douyin CDN")
+                        limit = 2 * 1024 ** 2
+                        payload = bytearray()
+                        for chunk in response.iter_bytes():
+                            payload.extend(chunk)
+                            if len(payload) > limit:
+                                raise ValueError("avatar response exceeds 2 MiB")
+                        data = bytes(payload)
+            except Exception:
+                data = None
+            try:
+                self._session_avatar_ready.emit({
+                    "contact_id": contact_id,
+                    "url": url,
+                    "data": data,
+                })
+            except RuntimeError:
+                pass
+
+        threading.Thread(target=worker, daemon=True, name="douyin-session-avatar").start()
+
+    def _apply_session_avatar(self, payload: object) -> None:
+        data = dict(payload) if isinstance(payload, dict) else {}
+        contact_id = str(data.get("contact_id") or "")
+        url = str(data.get("url") or "")
+        self._remote_avatar_loading.discard((contact_id, url))
+        raw = data.get("data")
+        if not raw:
+            return
+        pixmap = QPixmap()
+        if not pixmap.loadFromData(bytes(raw)):
+            return
+        pixmap = pixmap.scaled(
+            32, 32, Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self._remote_avatar_cache[url] = pixmap
+        for index, session in enumerate(self._sessions):
+            if (
+                str(session.get("wxid") or "") == contact_id
+                and str(session.get("avatar_url") or "") == url
+                and index < self._list.count()
+            ):
+                self._list.item(index).setIcon(QIcon(pixmap))
+
+    # ---------- 抖音账号切换 ----------
     def switch_to_channel(self, key: str) -> None:
         """外部（实例控制台「看会话」）请求切到某渠道视图。渠道不存在则忽略。"""
         if self._channels and key in [k for k, _ in self._channels]:
@@ -323,7 +425,7 @@ class HistoryPage(QWidget):
             self.request_refresh()
 
     def channel_reconnected(self, channel_key: str) -> None:
-        """某渠道 adapter 重连（如个人微信 hook 恢复）：正显示该渠道时换用新 adapter 并刷新。"""
+        """某抖音 adapter 重连时，正显示该渠道则换用新 adapter 并刷新。"""
         if self._adapter_for is None or channel_key != self._channel_key:
             return
         self._chat_generation += 1           # 旧 adapter 的后台结果不可落到新连接
@@ -413,7 +515,7 @@ class HistoryPage(QWidget):
             blockers.append("③“自动发送总闸”未开启")
 
         if not blockers:
-            self._delivery_hint.setText("自动回复已就绪：知识库明确命中时会发给微信，无法确认时转人工")
+            self._delivery_hint.setText("自动回复已就绪：知识库明确命中时会发给抖音私信，无法确认时转人工")
             self._delivery_hint.setStyleSheet("color:#138a72;")
         else:
             self._delivery_hint.setText(
@@ -456,6 +558,10 @@ class HistoryPage(QWidget):
         text = self._input.text().strip()
         if not text:
             return
+        checker = getattr(self.state, "has_uncertain_delivery", None)
+        if callable(checker) and checker(self._current_wxid, self._channel()):
+            self._send_status.setText("上一条发送结果仍在对账，暂时锁定人工发送以避免重复消息")
+            return
         try:
             if self.controller is not None:
                 ok = bool(self.controller.send(self._current_wxid, text, self._channel()))
@@ -490,12 +596,12 @@ class HistoryPage(QWidget):
         self._detail_lay.insertWidget(0, notice)
 
     def _request_chat(self, contact_id: str) -> None:
-        """优先显示缓存，并行读取客服快照与微信本机历史。"""
+        """优先显示缓存，并行读取客服快照与抖音私信本机历史。"""
         if not contact_id:
             return
         adapter = self.adapter
         if adapter is None:
-            self._show_chat_notice(contact_id, "微信尚未连接")
+            self._show_chat_notice(contact_id, "抖音私信尚未连接")
             return
 
         self._chat_generation += 1
@@ -576,9 +682,11 @@ class HistoryPage(QWidget):
                 self._chat_local_applied_generation = generation
             local_messages = snapshots.get("adapter", [])
             backend_messages = snapshots.get("backend", [])
-            msgs = merge_history_snapshots(local_messages, backend_messages)
+            # The verified browser snapshot already follows Douyin's visual order and is
+            # authoritative. Backend rows are only a fallback while it is unavailable.
+            msgs = local_messages or backend_messages
             self._send_status.setText(
-                "微信本机历史暂未就绪，已显示客服系统记录"
+                "抖音私信本机历史暂未就绪，已显示客服系统记录"
                 if backend_messages and not local_messages else ""
             )
             self._render_chat(contact_id, msgs=msgs)
@@ -608,7 +716,7 @@ class HistoryPage(QWidget):
         self._refresh_monitor_switch()
         if self.adapter is None:
             self._clear_detail(); return
-        # hook 在数据库切换/微信忙碌的短窗口里会成功返回空列表。对于已经展示过的同一
+        # hook 在数据库切换/抖音私信忙碌的短窗口里会成功返回空列表。对于已经展示过的同一
         # 会话，空结果不能证明聊天真的被清空，因此保留最后一次非空快照，下一轮再重试。
         if not msgs and same_contact and self._last_msgs:
             self._send_status.setText("聊天正在刷新，继续显示上次内容")
@@ -621,18 +729,27 @@ class HistoryPage(QWidget):
         self._last_msgs = [message_signature(m) for m in msgs]   # 媒体/卡片变化也触发实时重绘
         # 出向来源=挂件发件账本的溯源标记（发时即知；取代原先"拿文本去后端 AI 集/群发 JSON 事后猜"，
         # 省掉每次渲染/每 3 秒 live_tick 的 2 次后端 HTTP + 群发文件读）。账本是会话内存：
-        # 挂件重启前发的、或直接在微信里手打的，provenance_for 返回 None → 落"人工"（诚实默认）。
+        # 挂件重启前发的、或直接在抖音私信里手打的，provenance_for 返回 None → 落"人工"（诚实默认）。
         prov_for = getattr(self.adapter, "provenance_for", None)
-        avatar_provider = self.avatars if self._channel().split("#")[0] in {
-            "wechat_personal", "wechat"} else None
+        avatar_provider = self.avatars
         for m in msgs:
-            if not m["is_self"]:
+            if str(m.get("kind") or "") == "system":
+                sender = "system"
+            elif not m["is_self"]:
                 sender = "customer"
             else:
                 src = prov_for(str(m.get("text", ""))) if prov_for else None
                 live_source = str(m.get("provenance") or "")
                 sender = live_source if live_source in ("ai", "broadcast") else (
                     src if src in ("ai", "broadcast") else "agent"
+                )
+            display_time = str(m.get("display_time") or "").strip()
+            if display_time:
+                time_label = QLabel(display_time)
+                time_label.setObjectName("Muted")
+                time_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                self._detail_lay.insertWidget(
+                    self._detail_lay.count() - 1, time_label,
                 )
             row = _bubble_row(m, sender, bool(m["is_self"]), avatar_provider)
             avatar_label = getattr(row, "_avatar_label", None)
@@ -669,7 +786,7 @@ class HistoryPage(QWidget):
     # ---------- 跟随 ----------
     def note_incoming(self, contact_id: str, channel: str = "") -> None:
         """收到某联系人新消息：跟到 ta、刷新会话列表并弹到前台。
-        这是最可靠的『跟随』触发（挂件轮询到的消息 100% 可靠，不依赖微信是否清未读）。
+        这是最可靠的『跟随』触发（挂件轮询到的消息 100% 可靠，不依赖抖音私信是否清未读）。
         消息来自别的渠道时先切过去，保证跟随到正确渠道的联系人。"""
         if not contact_id:
             return
@@ -727,7 +844,7 @@ class HistoryPage(QWidget):
             self._send_status.setText("已实时更新；后台正在同步本机聊天记录")
 
     def follow_active(self) -> None:
-        """跟随微信当前会话：仅当微信里活跃会话**发生变化**时才切过去——
+        """跟随抖音私信当前会话：仅当抖音私信里活跃会话**发生变化**时才切过去——
         这样用户在挂件里手动点开的会话不会被每次轮询强行拽走。"""
         if self.adapter is None:
             return
@@ -778,7 +895,7 @@ class HistoryPage(QWidget):
             return 0
 
     def _load_backend_sessions(self, channel_key: str) -> list[dict] | None:
-        """在个人微信 QueryDB 不可用时，读取本租户后端已保存的会话快照。"""
+        """本地渠道历史不可用时，读取本租户后端已保存的会话快照。"""
         try:
             rows = self.bridge.list_conversations(limit=100)
         except Exception:
@@ -869,7 +986,7 @@ class HistoryPage(QWidget):
 
     def live_tick(self) -> None:
         """每 3s 的实时刷新入口。**所有可能阻塞的 hook/本地库读取都放到后台线程**，读完用
-        `_tick_ready` 信号回到 GUI 线程渲染——否则个人微信 hook client 超时可长达数秒，三个串行
+        `_tick_ready` 信号回到 GUI 线程渲染——否则本地桥超时可长达数秒，多个串行
         同步读会把 GUI 卡死（客户反馈的『概率卡死、读不出聊天记录』根因）。
 
         `_tick_busy` 单飞：上一次后台读没回来就跳过本次，避免慢读堆积。"""
@@ -1034,6 +1151,7 @@ class HistoryPage(QWidget):
             self._names.get(wxid) != next_names.get(wxid) for wxid in next_ids
         )
         sessions_changed = bool(sessions) and sessions != self._sessions
+        reconciled_contact = ""
         if sessions and (sessions_changed or names_changed):
             selected_contact = self._current_wxid
             self.refresh(sessions=sessions, names=next_names, select_first=False)
@@ -1043,6 +1161,17 @@ class HistoryPage(QWidget):
                 self._list.setCurrentRow(selected_idx)
                 self._list.blockSignals(False)
                 self._title.setText(f"与 {self._display_name(selected_contact)} 的聊天")
+            elif self._sessions:
+                # 当前会话可能因截图重新识别、昵称变化或账号切换而不再出现在新快照中。
+                # QListWidget 此时会把第一行画成选中态；若仍保留旧详情，界面就会出现
+                # “左侧阿白、右侧却是另一个群聊”的错位。显式打开第一条，保持选择与详情一致。
+                fallback_contact = str(self._sessions[0].get("wxid") or "")
+                self._list.blockSignals(True)
+                self._list.setCurrentRow(0)
+                self._list.blockSignals(False)
+                if fallback_contact:
+                    reconciled_contact = fallback_contact
+                    self._request_chat(fallback_contact)
         elif final and data.get("confirmed_empty") and not sessions:
             self.refresh(sessions=[], names={}, select_first=False)
         elif final and sessions == [] and not self._sessions and self._empty_tick_count >= 2:
@@ -1054,7 +1183,19 @@ class HistoryPage(QWidget):
                 "（会话读取未就绪）" + (f"\n{detail[:160]}" if detail else "")
             )
 
-        # ② 跟随微信活跃会话，或刷新当前/首个会话。这里只渲染 worker 带回的 msgs，绝不
+        # 左侧 QListWidget 的选中行和右侧详情是两个独立异步状态。列表重建或旧请求迟到时，
+        # 选中行可能仍是第一项，而详情保留另一联系人。每轮都校验这一不变量并主动校正。
+        selected_index = self._list.currentRow()
+        if 0 <= selected_index < len(self._sessions):
+            selected_contact = str(self._sessions[selected_index].get("wxid") or "")
+            if (
+                selected_contact
+                and selected_contact != self._current_wxid
+                and selected_contact != reconciled_contact
+            ):
+                self._request_chat(selected_contact)
+
+        # ② 跟随抖音私信活跃会话，或刷新当前/首个会话。这里只渲染 worker 带回的 msgs，绝不
         # 从 GUI 线程重新访问 hook。用户在 worker 期间手动换了联系人时，旧 cur 结果会被丢弃。
         active = data.get("active")
         active_changed = bool(active and active != self._last_active)
@@ -1068,9 +1209,6 @@ class HistoryPage(QWidget):
         followed_target = bool(active_changed and target == active)
         should_render = msgs is not None and (initial_target or followed_target)
         if current_target and msgs:
-            cached = self._conversation_cache.get(self._conversation_cache_key(target), [])
-            if cached:
-                msgs = merge_history_snapshots(msgs, cached)
             should_render = [message_signature(m) for m in msgs] != self._last_msgs
         if should_render:
             idx = self._index_for_contact(target)
@@ -1080,7 +1218,7 @@ class HistoryPage(QWidget):
                 self._list.blockSignals(False)
             self._render_chat(target, msgs=msgs)
         if data.get("backend_fallback") or data.get("message_fallback"):
-            self._send_status.setText("微信本机历史暂未就绪，已显示客服系统记录")
+            self._send_status.setText("抖音私信本机历史暂未就绪，已显示客服系统记录")
         elif final and sessions is not None and not data.get("session_error"):
             self._send_status.setText("")
         if active_changed and self.on_followed:
@@ -1138,8 +1276,11 @@ def _bubble_row(message: dict, sender: str, is_self: bool, avatar_provider=None)
 
     avatar = QLabel(); avatar.setFixedSize(36, 36)
     avatar.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
-    show_avatar = avatar_provider is not None and bool(sender_id)
-    if show_avatar:
+    avatar_url = str(message.get("sender_avatar", "") or "")
+    show_avatar = (avatar_provider is not None and bool(sender_id)) or bool(avatar_url)
+    if avatar_url:
+        avatar = RemoteImageLabel(avatar_url, width=36, height=36)
+    elif show_avatar:
         avatar.setPixmap(avatar_provider.get_pixmap(sender_id, sender_name))
 
     row = QWidget(); rl = QHBoxLayout(row); rl.setContentsMargins(0, 0, 0, 0); rl.setSpacing(6)

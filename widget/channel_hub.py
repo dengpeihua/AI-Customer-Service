@@ -6,11 +6,11 @@ from widget.models import InboundMsg
 
 
 class ChannelHub:
-    """多渠道注册中心 —— 让一个挂件同时跑个人微信 + 企微两条通路。
+    """抖音多账号渠道注册中心。
 
     每条渠道 = 一个 adapter（收发）+ 一个 pipeline（收→判→发/待人工）。入站消息按其
     `channel` 字段路由到对应 pipeline；人工回复/释放也按 channel 找回正确的 adapter/pipeline，
-    保证「待人工里企微的消息，人工回复时走企微的桥，不会误发到个人微信」。
+    保证待人工回复始终发回原抖音账号。
 
     第一个注册的渠道为默认渠道：channel=None 时（单渠道旧调用/无渠道信息）落到它。
     """

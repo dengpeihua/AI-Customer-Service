@@ -10,7 +10,6 @@ from app.models.stats import StatDaily
 from app.models.tag import CustomerTag, Tag
 from app.models.tenant import Tenant
 from app.models.user import User
-from app.models.wecom import WeComConfig
 
 __all__ = [
     "Tenant",
@@ -26,7 +25,6 @@ __all__ = [
     "MemoryOperation",
     "BotConfig",
     "StatDaily",
-    "WeComConfig",
     "Deal",
     "Tag",
     "CustomerTag",

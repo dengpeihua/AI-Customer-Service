@@ -17,10 +17,8 @@ class RuntimeState:
         self.backend_ok = False
         self.self_wxid = ""
         self.self_wxid_by_channel: dict[str, str] = {}
-        self.hook_base_url = cfg.hook_base_url
         self.hook_error = ""
         self.backend_error = ""
-        self.wechat_version = ""
         self.received = 0
         self.sent = 0
         self.recv_by_channel: dict[str, int] = {}
@@ -60,7 +58,7 @@ class RuntimeState:
 
     def set_self_wxid(self, channel_key: str, wxid: str) -> None:
         self.self_wxid_by_channel[channel_key] = wxid
-        self.self_wxid = wxid   # 末次写入，legacy 状态页兜底
+        self.self_wxid = wxid
 
     def get_self_wxid(self, channel_key: str) -> str:
         return self.self_wxid_by_channel.get(channel_key, "")
@@ -71,17 +69,23 @@ class RuntimeState:
     def is_ai_enabled(self, channel_key: str) -> bool:
         return self.ai_enabled_by_channel.get(channel_key, True)
 
-    def record_inbound(self, msg: InboundMsg, action: str) -> None:
+    def record_inbound(
+        self, msg: InboundMsg, action: str, *, count_received: bool = True,
+    ) -> None:
         self._roll_day()
-        self.received += 1
         ck = msg.get("channel", "")
-        self.recv_by_channel[ck] = self.recv_by_channel.get(ck, 0) + 1
+        if count_received:
+            self.received += 1
+            self.recv_by_channel[ck] = self.recv_by_channel.get(ck, 0) + 1
         if action in {"auto_reply", "handoff_notified"}:
             self.sent += 1
             self.sent_by_channel[ck] = self.sent_by_channel.get(ck, 0) + 1
-        self._recent.append({"contact": msg["contact_id"], "text": msg["text"], "action": action})
+        if count_received or action in {"auto_reply", "handoff_notified"}:
+            self._recent.append({
+                "contact": msg["contact_id"], "text": msg["text"], "action": action,
+            })
 
-    def add_pending(self, msg: InboundMsg, result: dict) -> None:
+    def add_pending(self, msg: InboundMsg, result: dict) -> bool:
         channel = msg.get("channel", "")
         contact = msg["contact_id"]
         msg_id = str(msg.get("msg_id") or "")
@@ -91,8 +95,6 @@ class RuntimeState:
             else:
                 self._pending_sequence += 1
                 pending_id = f"{channel}|{contact}|pending-{self._pending_sequence}"
-            if any(p.get("id") == pending_id for p in self.pending):
-                return
             item = {
                 "id": pending_id,
                 "msg_id": msg_id,
@@ -107,8 +109,20 @@ class RuntimeState:
                 "channel": channel,
                 "kind": result.get("pending_kind", "handoff"),
             }
+            existing = next((p for p in self.pending if p.get("id") == pending_id), None)
+            if existing is not None:
+                existing.update(item)
+                return False
             # 一条客户消息就是一个待办；不能按联系人合并，否则回复其中一条会误清其它问题。
             self.pending.append(item)
+            return True
+
+    def remove_pending_for_message(self, msg: InboundMsg) -> bool:
+        channel = str(msg.get("channel") or "")
+        msg_id = str(msg.get("msg_id") or "")
+        if not msg_id:
+            return False
+        return self.remove_pending(f"{channel}|{msg_id}")
 
     def pending_snapshot(self) -> list[dict]:
         with self._pending_lock:
@@ -118,6 +132,15 @@ class RuntimeState:
         with self._pending_lock:
             item = next((p for p in self.pending if p.get("id") == pending_id), None)
             return dict(item) if item is not None else None
+
+    def has_uncertain_delivery(self, contact_id: str, channel: str | None = None) -> bool:
+        with self._pending_lock:
+            return any(
+                str(item.get("contact") or "") == str(contact_id)
+                and (channel is None or str(item.get("channel") or "") == str(channel))
+                and item.get("kind") in {"delivery_uncertain", "delivery_waiting"}
+                for item in self.pending
+            )
 
     def remove_pending(self, pending_id: str) -> bool:
         """只完成一个明确的待办，绝不按客户批量清空。"""

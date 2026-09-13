@@ -13,7 +13,7 @@ class Conversation(TimestampMixin, Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     tenant_id: Mapped[int] = mapped_column(ForeignKey("tenant.id"), index=True)
-    channel: Mapped[str] = mapped_column(String(30))  # wechat_personal|wecom
+    channel: Mapped[str] = mapped_column(String(80))  # douyin#<account_id>
     contact_id: Mapped[str] = mapped_column(String(120))
     status: Mapped[str] = mapped_column(String(20), default="active")  # active|handoff|closed
     assignee_user_id: Mapped[int | None] = mapped_column(

@@ -23,7 +23,7 @@ class MessageDeliveryTests(unittest.TestCase):
         Base.metadata.create_all(self.engine)
         self.db = Session(self.engine)
         conversation = Conversation(
-            tenant_id=1, channel="wechat_personal", contact_id="wxid_customer",
+            tenant_id=1, channel="douyin#shop_a", contact_id="wxid_customer",
         )
         self.db.add(conversation)
         self.db.flush()

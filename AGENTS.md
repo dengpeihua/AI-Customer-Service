@@ -3,7 +3,7 @@
 ## Project Structure & Module Organization
 
 - `app/` contains the FastAPI backend, dialog orchestration, LLM adapters, RAG, and customer-memory services.
-- `widget/` contains the PySide6 desktop workbench and WeChat/WeCom channel adapters.
+- `widget/` contains the PySide6 desktop workbench and personal Douyin channel adapters.
 - `tests/` holds project-level regression tests. Name new files `test_<feature>.py`.
 - `alembic/versions/` contains database migrations; never edit an applied revision; add a new one. `scripts/` contains launch, restart, and knowledge-base utilities.
 - `agents/` and `mem/` are bundled components with their own `pyproject.toml` rules. `runtime/`, `native/`, and `assets/` are delivery/runtime resources, not general application source.
@@ -36,4 +36,4 @@ This checkout does not include Git history, so no local convention can be verifi
 
 ## Security & Configuration
 
-Never commit `.env`, live `widget_config.yaml`, `wecom_hook_config.yaml`, `acs.db`, backups, logs, tokens, or customer data. Copy `.env.example` and the `*.example.yaml` files for local setup; update templates only with safe placeholders. Back up `acs.db` before schema or knowledge-base writes. Keep `auto_send: false` in `widget_config.yaml` unless live customer sending is explicitly intended.
+Never commit `.env`, live `widget_config.yaml`, `douyin_accounts.yaml`, `acs.db`, backups, logs, tokens, cookies, Chrome profiles, or customer data. Copy `.env.example` and the `*.example.yaml` files for local setup; update templates only with safe placeholders. Back up `acs.db` before schema or knowledge-base writes. Keep `auto_send: false` in `widget_config.yaml` unless live personal-Douyin private-message sending is explicitly intended.

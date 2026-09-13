@@ -1,4 +1,4 @@
-"""Real WeChat conversation ingestion page for the Mem0 memory pipeline."""
+"""personal Douyin conversation ingestion page for the Mem0 memory pipeline."""
 from __future__ import annotations
 
 import hashlib
@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from widget.ui.pages.operations_page import _AsyncPage
-from widget.wechat_accounts import is_group_account
+from widget.conversation_accounts import is_group_account
 from widget.live_conversation import event_to_history_message, merge_live_messages
 
 
@@ -75,7 +75,7 @@ class MemoryConversationPage(_AsyncPage):
         self._labels = dict(labels or {})
         keys = [key for key, _label in self._channels]
         self._channel_key = default_channel if default_channel in keys else (
-            keys[0] if keys else str(getattr(adapter, "channel", "wechat_personal"))
+            keys[0] if keys else str(getattr(adapter, "channel", "douyin#default"))
         )
         self._sessions: list[dict] = []
         self._messages: list[dict] = []
@@ -111,7 +111,7 @@ class MemoryConversationPage(_AsyncPage):
         usage_title.setObjectName("OpsCardValue")
         usage_layout.addWidget(usage_title)
         self._memory_usage = QLabel(
-            "真实微信对话→提炼长期记忆→客户下次发消息时按当前话题语义召回→只把相关记忆交给客服模型→"
+            "真实抖音私信对话→提炼长期记忆→客户下次发消息时按当前话题语义召回→只把相关记忆交给客服模型→"
             "生成有连续感的客服回复。事实：稳定背景；偏好：沟通或选择倾向；需求：正在推进的目标；"
             "承诺：客户或客服明确约定的后续；备注：人工确认的补充信息。不相关记忆不会整库注入。"
             "当前自动注入范围是非业务闲聊或情绪支持；涉及产品、售后、投诉等使用知识库，缺少依据就转人工。"
@@ -290,9 +290,9 @@ class MemoryConversationPage(_AsyncPage):
         self._sessions_refresh_pending_preserve = False
         self._requested_sessions_preserve = preserve_snapshot
         if preserve_snapshot:
-            self._status.setText("正在后台刷新本机微信会话，继续显示当前内容…")
+            self._status.setText("正在后台刷新本机抖音私信会话，继续显示当前内容…")
         else:
-            self._status.setText("正在读取本机微信会话…")
+            self._status.setText("正在读取本机抖音私信会话…")
             self._requested_identity = None
             self._loaded_identity = None
             self._messages = []
@@ -758,8 +758,8 @@ class MemoryConversationPage(_AsyncPage):
             self,
             "确认提取长期记忆",
             f"将 {display_name} 已勾选的 {count} 条文本聊天交给本地 Mem0，并调用当前配置的 "
-            "DeepSeek / DashScope 模型完成提取与向量化。长期记忆页显示提炼后的事实/偏好，"
-            "不会把原聊天逐条伪装成画像，也不会发送微信消息。是否继续？",
+            "DeepSeek / MiniMax 模型完成提取与向量化。长期记忆页显示提炼后的事实/偏好，"
+            "不会把原聊天逐条伪装成画像，也不会发送抖音私信消息。是否继续？",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )

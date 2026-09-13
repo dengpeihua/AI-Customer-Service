@@ -7,7 +7,7 @@ from PySide6.QtWidgets import QApplication, QSplashScreen
 
 
 class StartupSplash(QSplashScreen):
-    """轻量启动窗口；只呈现进度，不执行任何微信或网络操作。"""
+    """轻量启动窗口；只呈现进度，不执行任何抖音私信或网络操作。"""
 
     def __init__(self, icon: QIcon) -> None:
         canvas = QPixmap(520, 260)

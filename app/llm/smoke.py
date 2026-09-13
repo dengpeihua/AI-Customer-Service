@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 from app.config import settings
-from app.llm import embedding_model_name, get_llm
+from app.llm import chat_model_name, embedding_model_name, get_llm
 from app.llm.base import EMBED_DIM, LLM
 
 
@@ -35,20 +35,15 @@ def run_smoke_check(llm: LLM) -> SmokeResult:
 
 
 def main() -> None:
-    if settings.llm_provider not in {"dashscope", "deepseek"}:
+    if settings.llm_provider not in {"deepseek", "minimax", "glm"}:
         raise RuntimeError(
-            f"real-provider smoke check requires dashscope/deepseek, got {settings.llm_provider}"
+            f"real-provider smoke check requires minimax/glm/deepseek, got {settings.llm_provider}"
         )
     result = run_smoke_check(get_llm())
-    chat_model = (
-        settings.deepseek_model
-        if settings.llm_provider == "deepseek"
-        else settings.llm_chat_model
-    )
     print(
         "llm_smoke=ok "
         f"provider={settings.llm_provider} "
-        f"chat_model={chat_model} "
+        f"chat_model={chat_model_name()} "
         f"embed_model={embedding_model_name()} "
         f"embedding_dimension={result.embedding_dimension} "
         f"reply_length={result.reply_length}"

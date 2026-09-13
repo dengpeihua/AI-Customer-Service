@@ -80,29 +80,31 @@ def _safe_error_detail(exc: Exception) -> str:
 
 
 def _required(name: str) -> str:
-    value = os.getenv(name)
-    if not value:
+    value = str(os.getenv(name) or "").strip()
+    if not value or value in {"待填写", "change-me", "your-api-key"}:
         raise RuntimeError(f"Missing required environment variable: {name}")
     return value
 
 
-def _dashscope_embedding_config() -> dict[str, Any]:
-    """Build the only supported embedding configuration: Alibaba Cloud Bailian."""
+def _minimax_embedding_config() -> dict[str, Any]:
+    """Build the MiniMax OpenAI-compatible embedding configuration."""
+    provider = os.getenv("MEM0_EMBEDDING_PROVIDER", "minimax").strip().lower()
+    if provider != "minimax":
+        raise RuntimeError("MEM0_EMBEDDING_PROVIDER must be minimax")
     base_url = os.getenv(
-        "DASHSCOPE_BASE_URL",
-        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "MINIMAX_EMBEDDING_BASE_URL",
+        "https://api.minimaxi.com/v1",
     ).strip()
     parsed = urlparse(base_url)
-    if parsed.scheme != "https" or parsed.hostname != "dashscope.aliyuncs.com":
+    if parsed.scheme != "https" or parsed.hostname != "api.minimaxi.com":
         raise RuntimeError(
-            "DASHSCOPE_BASE_URL must use Alibaba Cloud Bailian at "
-            "https://dashscope.aliyuncs.com"
+            "MINIMAX_EMBEDDING_BASE_URL must use MiniMax at "
+            "https://api.minimaxi.com/v1"
         )
     return {
-        "api_key": _required("DASHSCOPE_API_KEY"),
+        "api_key": _required("MINIMAX_API_KEY"),
         "openai_base_url": base_url,
-        "model": _required("LLM_EMBED_MODEL"),
-        "embedding_dims": int(os.getenv("EMBEDDING_DIMS", "1024")),
+        "model": _required("MINIMAX_EMBED_MODEL"),
     }
 
 
@@ -117,8 +119,8 @@ def build_config() -> dict[str, Any]:
     ).resolve()
     data_dir.mkdir(parents=True, exist_ok=True)
 
-    embedding_config = _dashscope_embedding_config()
-    embedding_dims = embedding_config["embedding_dims"]
+    embedding_config = _minimax_embedding_config()
+    embedding_dims = int(os.getenv("EMBEDDING_DIMS", "1536"))
 
     llm_provider = "deepseek" if os.getenv("DEEPSEEK_API_KEY") else "openai"
     if llm_provider != "deepseek":
@@ -138,8 +140,8 @@ def build_config() -> dict[str, Any]:
             },
         },
         "embedder": {
-            # Mem0 names this adapter "openai" because Bailian exposes an
-            # OpenAI-compatible endpoint. The endpoint itself is validated above.
+            # Mem0 names the adapter "openai" because MiniMax exposes this
+            # endpoint in OpenAI-compatible form. The external selector stays minimax.
             "provider": "openai",
             "config": embedding_config,
         },

@@ -10,6 +10,7 @@ __all__ = [
     "Vector",
     "EMBED_DIM",
     "close_llm",
+    "chat_model_name",
     "embedding_model_name",
     "get_llm",
     "runtime_summary",
@@ -21,18 +22,21 @@ _cached_real_config: tuple[str, ...] | None = None
 
 
 def embedding_model_name() -> str:
-    return settings.llm_embed_model
+    if settings.llm_provider == "glm":
+        return settings.glm_embed_model
+    return settings.minimax_embed_model
+
+
+def chat_model_name() -> str:
+    if settings.llm_provider == "glm":
+        return settings.glm_model
+    return settings.minimax_model if settings.llm_provider == "minimax" else settings.deepseek_model
 
 
 def runtime_summary() -> str:
-    chat_model = (
-        settings.deepseek_model
-        if settings.llm_provider == "deepseek"
-        else settings.llm_chat_model
-    )
     return (
         f"provider={settings.llm_provider} "
-        f"chat_model={chat_model} "
+        f"chat_model={chat_model_name()} "
         f"embed_model={embedding_model_name()} "
         f"embed_dim={EMBED_DIM}"
         + (
@@ -44,19 +48,28 @@ def runtime_summary() -> str:
 
 
 def get_llm() -> LLM:
-    if settings.llm_provider in {"dashscope", "deepseek"}:
-        if settings.llm_provider == "dashscope":
-            from app.llm.dashscope import DashScopeLLM
-            factory = DashScopeLLM
+    if settings.llm_provider in {"deepseek", "minimax", "glm"}:
+        if settings.llm_provider == "glm":
+            from app.llm.glm import GLMLLM
+            factory = GLMLLM
+        elif settings.llm_provider == "minimax":
+            from app.llm.minimax_chat import MiniMaxLLM
+            factory = MiniMaxLLM
         else:
             from app.llm.deepseek import DeepSeekLLM
             factory = DeepSeekLLM
         config = (
             settings.llm_provider,
-            settings.dashscope_api_key,
-            settings.dashscope_base_url,
-            settings.llm_chat_model,
-            settings.llm_embed_model,
+            settings.minimax_api_key,
+            settings.minimax_embedding_base_url,
+            settings.minimax_embed_model,
+            settings.minimax_api_base,
+            settings.minimax_model,
+            settings.glm_api_key,
+            settings.glm_api_base,
+            settings.glm_model,
+            settings.glm_embed_model,
+            str(settings.llm_embedding_dimension),
             settings.deepseek_api_key,
             settings.deepseek_api_base,
             settings.deepseek_model,

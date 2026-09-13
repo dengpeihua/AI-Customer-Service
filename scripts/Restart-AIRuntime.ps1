@@ -67,8 +67,8 @@ if (-not (Get-Process -Id $widget.Id -ErrorAction SilentlyContinue)) {
 }
 
 $health = Invoke-RestMethod -Uri "http://127.0.0.1:8000/health" -TimeoutSec 5
-if ([string]$health.llm -notlike "*embed_model=text-embedding-v3*embed_dim=1024*") {
-    throw "后端已启动，但未加载 DashScope text-embedding-v3 / 1024 维配置：$($health.llm)"
+if ([string]$health.llm -notlike "*embed_model=embo-01*embed_dim=1536*") {
+    throw "后端已启动，但未加载 MiniMax embo-01 / 1536 维配置：$($health.llm)"
 }
 
 Write-Output "runtime_restart=ok backend=$($health.llm) widget_pid=$($widget.Id)"

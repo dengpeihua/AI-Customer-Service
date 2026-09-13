@@ -1,5 +1,7 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+GLM_EMBEDDING_DIMENSIONS = (256, 512, 1024, 2048)
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
@@ -14,22 +16,24 @@ class Settings(BaseSettings):
     bootstrap_token: str = "change-me-bootstrap"
 
     field_enc_key: str = ""            # base64 32B；空则从 jwt_secret 派生(dev)，prod 必配
-    wecom_replay_window_s: int = 300
-    wecom_api_base: str = "https://qyapi.weixin.qq.com"
-    wecom_nonce_cache: int = 500
-
-    llm_provider: str = "dashscope"  # dashscope | deepseek
-    dashscope_api_key: str = ""
-    dashscope_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    llm_chat_model: str = "qwen-plus"
-    llm_embed_model: str = "text-embedding-v3"
-    llm_embedding_dimension: int = 1024
+    llm_provider: str = "minimax"
+    llm_embedding_dimension: int = 1536
+    minimax_api_key: str = ""
+    minimax_api_base: str = "https://api.minimaxi.com/v1"
+    minimax_model: str = "MiniMax-M3"
+    minimax_embedding_base_url: str = "https://api.minimaxi.com/v1"
+    minimax_embed_model: str = "embo-01"
+    # 备用智谱组合：glm-4.7 负责对话，embedding-3 负责知识库向量化。
+    glm_api_key: str = ""
+    glm_api_base: str = "https://open.bigmodel.cn/api/paas/v4"
+    glm_model: str = "glm-4.7"
+    glm_embed_model: str = "embedding-3"
     # OpenAI Agents SDK：所有消息由 Triage 使用当前对话模型选择售后知识库、闲聊或人工 Agent。
     agent_history_limit: int = 12
     agent_max_turns: int = 4
     # Triage + Handoff 目标 Agent 的整条工作流硬上限；桌面端 chat timeout 必须略大于它。
     agent_workflow_timeout_seconds: float = 120.0
-    # DeepSeek 负责对话；知识库 embedding 统一走 DashScope，避免假设 DeepSeek 提供向量模型。
+    # DeepSeek 为可选对话后端，搭配 MiniMax embedding。
     deepseek_api_key: str = ""
     deepseek_api_base: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-v4-flash"
@@ -38,9 +42,9 @@ class Settings(BaseSettings):
     rag_chunk_size: int = 500
     rag_chunk_overlap: int = 80
     # 余弦距离；<= 此值算命中(auto_reply)，否则转人工。
-    # 0.40 由真实 DashScope embedding 校准（2026-07-14）：该命中组 0.21–0.37 / 误命中组 0.45–0.63，
-    # 取分隔带内偏保守一侧（宁可转人工不乱答）。旧值 0.7 会放行全部误命中，是照 FakeLLM 拍的。
-    rag_distance_cutoff: float = 0.40
+    # MiniMax embo-01 在当前已审核知识库上的实测分隔：业务同义问法约 0.07~0.57，
+    # 闲聊样本约 0.78~0.96；取 0.60 保留安全间隔。更换模型或知识库后必须重新校准。
+    rag_distance_cutoff: float = 0.60
     kb_upload_max_bytes: int = 10 * 1024 * 1024  # 知识库上传单文件上限
     profile_min_chars: int = 4   # 客户消息短于此（或纯寒暄）不触发画像抽取，省 LLM 额度
     # 记忆工作台调用仓库内的本地 Mem0 OSS 服务。服务由交付启动器绑定到 127.0.0.1，
@@ -63,6 +67,11 @@ class Settings(BaseSettings):
 settings = Settings()
 
 
+def secret_is_configured(value: str) -> bool:
+    normalized = str(value or "").strip()
+    return bool(normalized) and normalized not in {"待填写", "change-me", "your-api-key"}
+
+
 # 这些是仓库里公开的 dev 占位值：谁都知道，绝不能带到生产。
 _INSECURE_DEFAULTS = {
     "jwt_secret": "dev-insecure-change-me-please-set-a-strong-random-secret",
@@ -76,14 +85,19 @@ def validate_agent_routing_config(s: Settings = settings) -> None:
     problems: list[str] = []
     if provider == "fake":
         problems.append("llm_provider=fake 不支持 Agents SDK Handoff")
-    elif provider == "dashscope":
-        if not s.dashscope_api_key:
-            problems.append("llm_provider=dashscope 但 dashscope_api_key 为空")
+    elif provider == "minimax":
+        if not secret_is_configured(s.minimax_api_key):
+            problems.append("llm_provider=minimax 但 minimax_api_key 为空")
+    elif provider == "glm":
+        if not secret_is_configured(s.glm_api_key):
+            problems.append("llm_provider=glm 但 glm_api_key 为空")
+        if s.llm_embedding_dimension not in GLM_EMBEDDING_DIMENSIONS:
+            problems.append("GLM embedding-3 维度必须为 256/512/1024/2048；切换后需重建知识库索引")
     elif provider == "deepseek":
-        if not s.deepseek_api_key:
+        if not secret_is_configured(s.deepseek_api_key):
             problems.append("llm_provider=deepseek 但 deepseek_api_key 为空")
-        if not s.dashscope_api_key:
-            problems.append("llm_provider=deepseek 但用于知识库向量的 dashscope_api_key 为空")
+        if not secret_is_configured(s.minimax_api_key):
+            problems.append("llm_provider=deepseek 但 minimax_api_key 为空")
     else:
         problems.append(f"不支持的 llm_provider={provider or '<empty>'}")
     if problems:
@@ -107,13 +121,17 @@ def validate_production_secrets(s: Settings = settings) -> None:
             problems.append(f"{name} 仍是默认/过弱值，请设为足够长的强随机串")
     if not s.field_enc_key:
         problems.append("field_enc_key 未配置（生产必须配独立 base64 32B 密钥，不能从 jwt_secret 派生）")
-    if s.llm_provider == "dashscope" and not s.dashscope_api_key:
-        problems.append("llm_provider=dashscope 但 dashscope_api_key 为空")
-    if s.llm_provider == "deepseek":
-        if not s.deepseek_api_key:
+    if s.llm_provider == "minimax":
+        if not secret_is_configured(s.minimax_api_key):
+            problems.append("llm_provider=minimax 但 minimax_api_key 为空")
+    elif s.llm_provider == "glm":
+        if not secret_is_configured(s.glm_api_key):
+            problems.append("llm_provider=glm 但 glm_api_key 为空")
+    elif s.llm_provider == "deepseek":
+        if not secret_is_configured(s.deepseek_api_key):
             problems.append("llm_provider=deepseek 但 deepseek_api_key 为空")
-        if not s.dashscope_api_key:
-            problems.append("llm_provider=deepseek 但用于知识库向量的 dashscope_api_key 为空")
+        if not secret_is_configured(s.minimax_api_key):
+            problems.append("llm_provider=deepseek 但 minimax_api_key 为空")
 
     if problems:
         raise RuntimeError(

@@ -1,4 +1,4 @@
-"""字段级加密（AES-GCM）。用于把 wecom_config 的 secret/aeskey 密文落库。
+"""字段级加密（AES-GCM）。用于把需要持久化的渠道密钥以密文落库。
 密钥取 settings.field_enc_key(base64 32B)；未配则从 jwt_secret 派生并告警（dev 可跑，prod 必配）。"""
 from __future__ import annotations
 import base64, hashlib, logging, os

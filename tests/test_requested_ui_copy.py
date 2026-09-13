@@ -12,6 +12,7 @@ from PySide6.QtWidgets import QApplication, QLabel, QPushButton
 from app.ops.service import run_functional_checks
 from widget.config import WidgetConfig
 from widget.state import RuntimeState
+from widget.ui.message_content import MessageContent
 from widget.ui.pages.history_page import HistoryPage
 from widget.ui.pages.long_term_memory_page import LongTermMemoryPage
 from widget.ui.pages.memory_conversation_page import MemoryConversationPage
@@ -21,7 +22,7 @@ from widget.ui.workbench import WorkbenchWindow
 
 
 EXPECTED_MEMORY_GUIDE = (
-    "真实微信对话→提炼长期记忆→客户下次发消息时按当前话题语义召回→只把相关记忆交给客服模型→"
+    "真实抖音私信对话→提炼长期记忆→客户下次发消息时按当前话题语义召回→只把相关记忆交给客服模型→"
     "生成有连续感的客服回复。事实：稳定背景；偏好：沟通或选择倾向；需求：正在推进的目标；"
     "承诺：客户或客服明确约定的后续；备注：人工确认的补充信息。不相关记忆不会整库注入。"
     "当前自动注入范围是非业务闲聊或情绪支持；涉及产品、售后、投诉等使用知识库，缺少依据就转人工。"
@@ -74,6 +75,55 @@ class RequestedUiCopyTests(unittest.TestCase):
             page.close()
             page.deleteLater()
 
+    def test_douyin_content_button_opens_the_specific_video_url(self) -> None:
+        expected = "https://www.douyin.com/video/7674274143898127081"
+        content = MessageContent({
+            "kind": "app_post",
+            "text": "分享视频",
+            "url": expected,
+        })
+        try:
+            button = next(
+                child for child in content.findChildren(QPushButton)
+                if child.text() == "打开内容"
+            )
+            with patch(
+                "widget.ui.message_content.QDesktopServices.openUrl",
+                return_value=True,
+            ) as open_url:
+                button.click()
+            self.assertEqual(expected, open_url.call_args.args[0].toString())
+        finally:
+            content.close()
+            content.deleteLater()
+
+    def test_douyin_video_button_uses_video_url_and_missing_target_has_no_button(self) -> None:
+        expected = "https://www.douyin.com/video/7674274143898127081"
+        video = MessageContent({
+            "kind": "video", "text": "视频", "video_url": expected,
+        })
+        unavailable = MessageContent({"kind": "app_post", "text": "活动邀请"})
+        try:
+            play = next(
+                child for child in video.findChildren(QPushButton)
+                if child.text() == "播放视频"
+            )
+            with patch(
+                "widget.ui.message_content.QDesktopServices.openUrl",
+                return_value=True,
+            ) as open_url:
+                play.click()
+            self.assertEqual(expected, open_url.call_args.args[0].toString())
+            self.assertFalse(any(
+                child.text() == "打开内容"
+                for child in unavailable.findChildren(QPushButton)
+            ))
+        finally:
+            video.close()
+            video.deleteLater()
+            unavailable.close()
+            unavailable.deleteLater()
+
     def test_conversation_center_kb_button_opens_admin_without_summarizing(self) -> None:
         bridge = MagicMock()
         bridge.cfg = SimpleNamespace(backend_base_url="http://127.0.0.1:8000/")
@@ -125,6 +175,78 @@ class RequestedUiCopyTests(unittest.TestCase):
                 warning.call_args.args[2],
             )
             bridge.summarize_to_kb.assert_not_called()
+        finally:
+            page.close()
+            page.deleteLater()
+
+    def test_conversation_refresh_cannot_leave_first_row_with_stale_chat(self) -> None:
+        adapter = MagicMock()
+        adapter.channel = "douyin#shop_a"
+        page = HistoryPage(
+            MagicMock(), adapter=adapter, state=RuntimeState(WidgetConfig()),
+            defer_initial_load=True,
+        )
+        try:
+            page._sessions = [{"wxid": "personal:old", "name": "旧会话"}]
+            page._names = {"personal:old": "旧会话"}
+            page._current_wxid = "personal:old"
+            page._request_chat = MagicMock()
+
+            page._apply_tick({
+                "adapter": adapter,
+                "sessions": [{
+                    "wxid": "personal:new", "name": "阿白",
+                    "summary": "可以可以", "last_time": 1700000000,
+                }],
+                "names": {"personal:new": "阿白"},
+                "cur": "personal:old",
+                "target": None,
+                "msgs": None,
+                "active": None,
+                "final": False,
+            })
+
+            self.assertEqual(0, page._list.currentRow())
+            page._request_chat.assert_called_once_with("personal:new")
+        finally:
+            page.close()
+            page.deleteLater()
+
+    def test_selected_conversation_is_reconciled_with_visible_chat(self) -> None:
+        adapter = MagicMock()
+        adapter.channel = "douyin#shop_a"
+        page = HistoryPage(
+            MagicMock(), adapter=adapter, state=RuntimeState(WidgetConfig()),
+            defer_initial_load=True,
+        )
+        try:
+            sessions = [
+                {"wxid": "personal:alice", "name": "阿白", "summary": "可以可以"},
+                {"wxid": "personal:group", "name": "研究群", "summary": "群消息"},
+            ]
+            page.refresh(
+                sessions=sessions,
+                names={"personal:alice": "阿白", "personal:group": "研究群"},
+                select_first=False,
+            )
+            page._list.blockSignals(True)
+            page._list.setCurrentRow(0)
+            page._list.blockSignals(False)
+            page._current_wxid = "personal:group"
+            page._request_chat = MagicMock()
+
+            page._apply_tick({
+                "adapter": adapter,
+                "sessions": sessions,
+                "names": {"personal:alice": "阿白", "personal:group": "研究群"},
+                "cur": "personal:group",
+                "target": "personal:group",
+                "msgs": None,
+                "active": None,
+                "final": False,
+            })
+
+            page._request_chat.assert_called_once_with("personal:alice")
         finally:
             page.close()
             page.deleteLater()

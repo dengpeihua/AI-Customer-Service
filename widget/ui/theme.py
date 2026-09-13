@@ -114,24 +114,13 @@ QLabel#BubbleOut, QWidget#BubbleOut {
 QWidget#ConsolePanel, QWidget#MemoryPage { background: #F3F6FA; }
 QLabel#ConvName { font-weight: 700; color: #132A46; }
 QLabel#ConvLast { color: #728197; font-size: 12px; }
-QLabel#BadgeWechat { background: #E8F5EE; color: #25734C; border-radius: 7px; padding: 1px 6px; font-size: 10px; }
-QLabel#BadgeWecom { background: #E7F0FC; color: #235EAA; border-radius: 7px; padding: 1px 6px; font-size: 10px; }
+QLabel#BadgeDouyin { background: #FDE8EC; color: #B21E35; border-radius: 7px; padding: 1px 6px; font-size: 10px; }
 QLabel#PendingDot { color: #C74653; font-weight: 700; }
 QLabel#AiTag { background: #DDEBFF; color: #174F97; border-radius: 6px; padding: 0 5px; font-size: 10px; }
 QLabel#AiOffTip { color: #B93E4B; font-size: 12px; }
 QCheckBox { color: #273B52; spacing: 7px; }
 QCheckBox::indicator { width: 15px; height: 15px; }
 QCheckBox::indicator:checked { background: #174F97; border: 2px solid #174F97; border-radius: 3px; }
-QDialog#WechatInstancePicker QRadioButton#WechatChoiceRadio { color: #153E68; spacing: 10px; }
-QDialog#WechatInstancePicker QRadioButton#WechatChoiceRadio::indicator {
-    width: 18px; height: 18px; background: #FFFFFF; border: 2px solid #55708D; border-radius: 10px;
-}
-QDialog#WechatInstancePicker QRadioButton#WechatChoiceRadio::indicator:hover {
-    border-color: #174F97; background: #EDF4FD;
-}
-QDialog#WechatInstancePicker QRadioButton#WechatChoiceRadio::indicator:checked {
-    background: #FFFFFF; border: 6px solid #174F97; border-radius: 15px;
-}
 QCheckBox:disabled, QLabel:disabled, QPushButton:disabled { color: #9AA7B5; background-color: #EEF2F6; }
 QMenu { background: #FFFFFF; color: #18263A; border: 1px solid #CAD5E1; padding: 4px; }
 QMenu::item { background: transparent; color: #18263A; padding: 7px 24px 7px 10px; }

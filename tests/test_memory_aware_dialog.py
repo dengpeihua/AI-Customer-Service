@@ -68,7 +68,7 @@ class MemoryAwareDialogTests(unittest.TestCase):
                 self.db,
                 self.llm,
                 7,
-                "wechat_personal",
+                "douyin#shop_a",
                 "wxid_friend",
                 "客户消息",
                 None,
@@ -106,12 +106,12 @@ class MemoryAwareDialogTests(unittest.TestCase):
             ) as agents_mock,
         ):
             first = answer(
-                self.db, self.llm, 7, "wechat_personal", "wxid_friend",
-                "你好", None, source_message_id="wechat:123",
+                self.db, self.llm, 7, "douyin#shop_a", "wxid_friend",
+                "你好", None, source_message_id="douyin:123",
             )
             second = answer(
-                self.db, self.llm, 7, "wechat_personal", "wxid_friend",
-                "你好", first["conversation_id"], source_message_id="wechat:123",
+                self.db, self.llm, 7, "douyin#shop_a", "wxid_friend",
+                "你好", first["conversation_id"], source_message_id="douyin:123",
             )
 
         self.assertEqual(first["outbound_message_id"], second["outbound_message_id"])
@@ -133,7 +133,7 @@ class MemoryAwareDialogTests(unittest.TestCase):
                 self.db,
                 self.llm,
                 7,
-                "wechat_personal",
+                "douyin#shop_a",
                 "wxid_friend",
                 "你好",
                 None,
@@ -165,7 +165,7 @@ class MemoryAwareDialogTests(unittest.TestCase):
                 self.db,
                 self.llm,
                 7,
-                "wechat_personal",
+                "douyin#shop_a",
                 "wxid_friend",
                 "你好呀",
                 None,
@@ -215,7 +215,7 @@ class MemoryAwareDialogTests(unittest.TestCase):
                 self.db,
                 self.llm,
                 7,
-                "wechat_personal",
+                "douyin#shop_a",
                 "wxid_friend",
                 "我今天有点难过",
                 None,
@@ -226,7 +226,7 @@ class MemoryAwareDialogTests(unittest.TestCase):
         self.assertIn("麻将", captured_context[0].memory_note)
         self.memory_service.recall.assert_called_once_with(
             tenant_id=7,
-            channel="wechat_personal",
+            channel="douyin#shop_a",
             contact_id="wxid_friend",
             query="我今天有点难过",
             limit=5,
@@ -270,7 +270,7 @@ class MemoryAwareDialogTests(unittest.TestCase):
                 self.db,
                 self.llm,
                 7,
-                "wechat_personal",
+                "douyin#shop_a",
                 "wxid_friend",
                 "无法识别的消息",
                 None,
@@ -290,7 +290,7 @@ class MemoryAwareDialogTests(unittest.TestCase):
                 self.db,
                 self.llm,
                 7,
-                "wechat_personal",
+                "douyin#shop_a",
                 "wxid_friend",
                 "你好",
                 None,
@@ -303,7 +303,7 @@ class MemoryAwareDialogTests(unittest.TestCase):
     def test_agent_input_contains_recent_history_but_not_handoff_notice(self) -> None:
         conversation = Conversation(
             tenant_id=7,
-            channel="wechat_personal",
+            channel="douyin#shop_a",
             contact_id="wxid_friend",
             status="active",
         )
@@ -357,7 +357,7 @@ class MemoryAwareDialogTests(unittest.TestCase):
                 self.db,
                 self.llm,
                 7,
-                "wechat_personal",
+                "douyin#shop_a",
                 "wxid_friend",
                 "那现在呢？",
                 conversation.id,
@@ -400,7 +400,7 @@ class MemoryAwareDialogTests(unittest.TestCase):
                 self.db,
                 self.llm,
                 7,
-                "wechat_personal",
+                "douyin#shop_a",
                 "wxid_friend",
                 "产品现在的价钱是怎样的",
                 None,
@@ -409,7 +409,7 @@ class MemoryAwareDialogTests(unittest.TestCase):
                 self.db,
                 self.llm,
                 7,
-                "wechat_personal",
+                "douyin#shop_a",
                 "wxid_friend",
                 "我有一只小狗叫麻将，他是一只很乖的小狗",
                 first["conversation_id"],
@@ -438,7 +438,7 @@ class MemoryAwareDialogTests(unittest.TestCase):
     def test_unanswered_customer_batch_is_used_for_routing_and_memory(self) -> None:
         conversation = Conversation(
             tenant_id=7,
-            channel="wechat_personal",
+            channel="douyin#shop_a",
             contact_id="wxid_friend",
             status="active",
         )
@@ -484,7 +484,7 @@ class MemoryAwareDialogTests(unittest.TestCase):
                 self.db,
                 self.llm,
                 7,
-                "wechat_personal",
+                "douyin#shop_a",
                 "wxid_friend",
                 "我有一只小狗叫麻将",
                 conversation.id,
@@ -502,7 +502,7 @@ class MemoryAwareDialogTests(unittest.TestCase):
     def test_foreign_contact_conversation_id_is_never_reused(self) -> None:
         foreign = Conversation(
             tenant_id=7,
-            channel="wechat_personal",
+            channel="douyin#shop_a",
             contact_id="contact-a",
             status="active",
         )
@@ -524,7 +524,7 @@ class MemoryAwareDialogTests(unittest.TestCase):
                 self.db,
                 self.llm,
                 7,
-                "wechat_personal",
+                "douyin#shop_a",
                 "contact-b",
                 "你好",
                 foreign.id,

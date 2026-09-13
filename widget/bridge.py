@@ -41,7 +41,7 @@ class Bridge:
         *, timeout: float = 135.0,
     ) -> dict:
         # 后端会串行执行 Triage + Handoff 目标 Agent；不能沿用普通接口 15 秒超时，
-        # 否则后端生成成功但桌面端拿不到 reply/message_id，微信游标又已推进，消息永久漏发。
+        # 否则后端生成成功但桌面端拿不到 reply/message_id，抖音私信游标又已推进，消息永久漏发。
         return self._authed("POST", "/v1/chat", json={
             "channel": msg["channel"], "contact_id": msg["contact_id"],
             "text": msg["text"], "conversation_id": conversation_id,
@@ -212,8 +212,8 @@ class Bridge:
         return self._authed("POST", "/v1/kb/summarize",
                             json={"channel": channel, "contact_id": contact_id})
 
-    def ingest_history_texts(self, texts: list[str], title: str = "企微本地历史反哺") -> dict:
-        """把企微本地库收割的历史消息文本送后端 LLM 蒸馏成 FAQ 反哺知识库（非裸转储）。"""
+    def ingest_history_texts(self, texts: list[str], title: str = "渠道历史反哺") -> dict:
+        """把渠道历史消息文本送后端 LLM 蒸馏成 FAQ 反哺知识库（非裸转储）。"""
         return self._authed("POST", "/v1/kb/summarize-texts",
                             json={"texts": texts, "title": title})
 

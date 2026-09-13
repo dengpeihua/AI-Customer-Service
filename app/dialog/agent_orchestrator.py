@@ -12,7 +12,7 @@ from openai import AsyncOpenAI, DefaultAsyncHttpxClient
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
-from app.config import settings
+from app.config import secret_is_configured, settings
 from app.kb.retriever import retrieve
 from app.llm.base import LLM
 
@@ -22,6 +22,28 @@ AFTER_SALES_ROUTE = "after_sales"
 CHITCHAT_ROUTE = "chitchat"
 HUMAN_ROUTE = "human"
 MISS_HANDOFF_MARK = "<转人工>"
+
+_CHITCHAT_SIGNALS = (
+    "你好", "谢谢", "感谢", "心情", "开心", "高兴", "难过", "伤心", "不开心",
+    "郁闷", "烦心", "喜欢", "爱好", "小狗", "狗狗", "小猫", "猫咪", "宠物",
+    "家人", "朋友", "弟弟", "妹妹", "哥哥", "姐姐", "孩子", "游戏", "电影",
+    "音乐", "旅游", "散步", "生活", "分享", "聊聊",
+)
+_BUSINESS_KNOWLEDGE_SIGNALS = (
+    "店铺", "商品", "产品", "购买", "下单", "订单", "快递", "物流", "发货",
+    "收货", "发票", "退款", "退货", "换货", "维修", "保修", "投诉", "价格",
+    "多少钱", "优惠", "库存", "尺码", "质量", "售后", "改地址", "催发货",
+    "赔偿", "配送", "包邮", "营业", "开门", "关门", "打烊", "几点",
+)
+_EXPLICIT_HUMAN_OR_OPERATION_SIGNALS = (
+    "转人工", "找人工", "人工客服", "真人客服", "转接客服", "联系人工",
+    "帮我退款", "给我退款", "申请退款", "我要退款", "帮我退货", "申请退货",
+    "帮我改地址", "修改地址", "取消订单", "帮我发货", "马上发货", "帮我转账",
+)
+_HIGH_RISK_SIGNALS = (
+    "自杀", "轻生", "不想活", "伤害自己", "伤害别人", "自残", "杀人", "报警",
+    "急救", "生命危险",
+)
 
 BASE_GROUNDING = (
     "你是这家店的售后知识库客服。回答里的任何具体信息、政策、价格、时间、数字或承诺，"
@@ -148,6 +170,53 @@ def _capture_handoff(context: AgentRunContext, data: RouteHandoffInput) -> None:
     context.route_summary = data.summary.strip()
 
 
+def _current_user_batch(input_items: Sequence[dict[str, str]]) -> str:
+    return next(
+        (
+            str(item.get("content") or "").strip()
+            for item in reversed(input_items)
+            if str(item.get("role") or "") == "user"
+        ),
+        "",
+    )
+
+
+def _has_human_operation_or_risk_signal(current_batch: str) -> bool:
+    return any(marker in current_batch for marker in _EXPLICIT_HUMAN_OR_OPERATION_SIGNALS) or any(
+        marker in current_batch for marker in _HIGH_RISK_SIGNALS
+    )
+
+
+def _is_clear_low_risk_chitchat(input_items: Sequence[dict[str, str]]) -> bool:
+    """Identify only obvious casual sharing that is safe to recover from a false human route."""
+    current_batch = _current_user_batch(input_items)
+    if not current_batch:
+        return False
+    if any(marker in current_batch for marker in _BUSINESS_KNOWLEDGE_SIGNALS):
+        return False
+    if _has_human_operation_or_risk_signal(current_batch):
+        return False
+    return any(marker in current_batch for marker in _CHITCHAT_SIGNALS)
+
+
+def _may_attempt_kb_recovery(input_items: Sequence[dict[str, str]]) -> bool:
+    current_batch = _current_user_batch(input_items)
+    return bool(current_batch) and not _has_human_operation_or_risk_signal(current_batch)
+
+
+def _has_qualified_kb_recovery(
+    input_items: Sequence[dict[str, str]], hits: Sequence[dict[str, Any]],
+) -> bool:
+    if not hits:
+        return False
+    current_batch = _current_user_batch(input_items)
+    if any(marker in current_batch for marker in _BUSINESS_KNOWLEDGE_SIGNALS):
+        return True
+    # 对没有显式业务词的同义问法，仅允许非常强的向量证据纠正模型路由。
+    best_distance = min(float(hit["distance"]) for hit in hits)
+    return best_distance <= min(0.30, float(settings.rag_distance_cutoff))
+
+
 def _load_kb_hits(context: AgentRunContext) -> None:
     """Load grounded business evidence once after Triage selects the business agent."""
     if context.kb_loaded:
@@ -240,6 +309,14 @@ def _model_settings(
     *, temperature: float | None, require_handoff: bool = False,
     extra_body: dict[str, Any] | None = None,
 ) -> ModelSettings:
+    if settings.llm_provider.strip().lower() == "glm":
+        from app.llm.glm import glm_temperature
+        # GLM 仅支持 auto；未发生 Handoff 时仍由 _run_with_model 强制转人工。
+        return ModelSettings(
+            temperature=glm_temperature(temperature),
+            tool_choice="auto",
+            extra_body=extra_body,
+        )
     return ModelSettings(
         temperature=temperature,
         tool_choice="required" if require_handoff else None,
@@ -331,7 +408,10 @@ def build_customer_service_agents(
             "客户明确要求真人、要求执行退款/改订单/发货/转账等真实操作、表达无法理解、"
             "信息不足或存在高风险时转人工 Agent。多意图消息只要包含实际操作或明确真人要求，"
             "优先人工；否则只要包含业务事实问题，优先售后知识库。Handoff 参数 reason 写选择依据，"
-            "summary 写给目标 Agent 的简短需求摘要。"
+            "summary 写给目标 Agent 的简短需求摘要。注意：宠物名字可能叫『麻将』，这个词本身"
+            "不代表赌博或高风险；『我有一只小狗叫麻将』『我心情不好的时候喜欢和小猫麻将玩』"
+            "都是明确的低风险生活分享，应转闲聊 Agent。只有出现自伤、伤人等明确风险信号时，"
+            "普通的『心情不好』才升级为人工。"
         ),
         handoffs=[after_sales_handoff, chitchat_handoff, human_handoff],
         model=model,
@@ -366,6 +446,35 @@ async def _run_with_model(
         max_turns=settings.agent_max_turns,
         run_config=RunConfig(tracing_disabled=True),
     )
+    if (
+        result.last_agent is workflow.human
+        and _is_clear_low_risk_chitchat(input_items)
+    ):
+        corrected = await Runner.run(
+            workflow.chitchat,
+            input=input_items,
+            context=context,
+            max_turns=settings.agent_max_turns,
+            run_config=RunConfig(tracing_disabled=True),
+        )
+        result = corrected
+        if corrected.last_agent is workflow.chitchat:
+            context.route_reason = "明确的低风险生活或情绪分享，纠正为闲聊"
+            context.route_summary = context.route_summary or "客户进行生活或情绪分享"
+    elif result.last_agent is workflow.human and _may_attempt_kb_recovery(input_items):
+        _load_kb_hits(context)
+        if _has_qualified_kb_recovery(input_items, context.kb_hits):
+            corrected = await Runner.run(
+                workflow.after_sales,
+                input=input_items,
+                context=context,
+                max_turns=settings.agent_max_turns,
+                run_config=RunConfig(tracing_disabled=True),
+            )
+            result = corrected
+            if corrected.last_agent is workflow.after_sales:
+                context.route_reason = "Triage 误转人工，但知识库存在合格证据，纠正为售后知识库"
+                context.route_summary = context.route_summary or "客户询问知识库可回答的业务事实"
     if result.last_agent is workflow.after_sales:
         route = AFTER_SALES_ROUTE
     elif result.last_agent is workflow.chitchat:
@@ -395,12 +504,14 @@ async def _run_with_model(
 
 def _provider_config() -> tuple[str, str, dict[str, Any] | None]:
     provider = settings.llm_provider.strip().lower()
-    if provider == "dashscope":
-        if not settings.dashscope_api_key:
-            raise ValueError("DASHSCOPE_API_KEY 未配置，Triage Agent 无法运行")
-        return settings.dashscope_base_url, settings.llm_chat_model, None
+    if provider == "minimax":
+        from app.llm.minimax_chat import minimax_chat_config
+        return minimax_chat_config()
+    if provider == "glm":
+        from app.llm.glm import glm_chat_config
+        return glm_chat_config()
     if provider == "deepseek":
-        if not settings.deepseek_api_key:
+        if not secret_is_configured(settings.deepseek_api_key):
             raise ValueError("DEEPSEEK_API_KEY 未配置，Triage Agent 无法运行")
         extra_body = {
             "thinking": {
@@ -409,7 +520,7 @@ def _provider_config() -> tuple[str, str, dict[str, Any] | None]:
         }
         return settings.deepseek_api_base, settings.deepseek_model, extra_body
     raise ValueError(
-        "LLM_PROVIDER=fake 不支持 Agents SDK 工具调用；请配置 dashscope 或 deepseek"
+        "LLM_PROVIDER 必须配置为 minimax、glm 或 deepseek 才能运行 Agents SDK 工具调用"
     )
 
 
@@ -417,11 +528,11 @@ async def _run_with_configured_model(
     context: AgentRunContext, input_items: list[dict[str, str]],
 ) -> AgentRunResult:
     base_url, model_name, extra_body = _provider_config()
-    api_key = (
-        settings.dashscope_api_key
-        if settings.llm_provider.strip().lower() == "dashscope"
-        else settings.deepseek_api_key
-    )
+    api_key = {
+        "minimax": settings.minimax_api_key,
+        "glm": settings.glm_api_key,
+        "deepseek": settings.deepseek_api_key,
+    }[settings.llm_provider.strip().lower()]
     client = AsyncOpenAI(
         api_key=api_key,
         base_url=base_url,

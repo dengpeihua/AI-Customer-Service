@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import threading
+import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock
@@ -12,6 +14,7 @@ from PySide6.QtWidgets import QApplication, QLabel
 from widget.config import WidgetConfig
 from widget.handoff import HandoffController
 from widget.state import RuntimeState
+from widget.ui.pages.handoff_page import HandoffPage
 from widget.ui.workbench import WorkbenchWindow
 
 
@@ -37,7 +40,7 @@ class WorkbenchPendingCountTests(unittest.TestCase):
         state = RuntimeState(WidgetConfig())
         state.add_pending(
             {
-                "channel": "wechat_personal",
+                "channel": "douyin#shop_a",
                 "msg_id": "test-message",
                 "contact_id": "wxid_customer",
                 "sender_id": "wxid_customer",
@@ -55,7 +58,7 @@ class WorkbenchPendingCountTests(unittest.TestCase):
             self.assertEqual("待人工 (1)", window._btn["handoff"].text())
 
             self.assertTrue(
-                controller.reply("wxid_customer", "已人工回复", "wechat_personal")
+                controller.reply("wxid_customer", "已人工回复", "douyin#shop_a")
             )
             QApplication.processEvents()
 
@@ -94,6 +97,60 @@ class WorkbenchPendingCountTests(unittest.TestCase):
         finally:
             window.close()
             window.deleteLater()
+
+    def test_handoff_reply_does_not_block_the_gui_thread(self):
+        class BlockingController:
+            def __init__(self):
+                self.item = {
+                    "id": "pending-1",
+                    "channel": "douyin#shop_a",
+                    "contact": "customer-1",
+                    "text": "需要人工回复",
+                    "draft": "",
+                }
+                self.started = threading.Event()
+                self.release = threading.Event()
+                self.changed = 0
+                self.last_error = ""
+
+            def pending(self):
+                return [dict(self.item)] if self.item else []
+
+            def reply_pending(self, pending_id, text, *, notify=True):
+                self.started.set()
+                self.release.wait(timeout=2)
+                self.item = None
+                return pending_id == "pending-1" and text == "人工回复"
+
+            def notify_changed(self):
+                self.changed += 1
+
+        controller = BlockingController()
+        page = HandoffPage(controller)
+        try:
+            page._edit.setPlainText("人工回复")
+            started_at = time.monotonic()
+            page._on_send()
+            elapsed = time.monotonic() - started_at
+
+            self.assertLess(elapsed, 0.1)
+            self.assertTrue(controller.started.wait(timeout=1))
+            self.assertFalse(page._send_button.isEnabled())
+            self.assertIn("正在发送", page._status.text())
+
+            controller.release.set()
+            deadline = time.monotonic() + 2
+            while not page._send_button.isEnabled() and time.monotonic() < deadline:
+                QApplication.processEvents()
+                time.sleep(0.01)
+
+            self.assertTrue(page._send_button.isEnabled())
+            self.assertEqual("已回复并结束这一条待办", page._status.text())
+            self.assertEqual(1, controller.changed)
+        finally:
+            controller.release.set()
+            page.close()
+            page.deleteLater()
 
 
 if __name__ == "__main__":

@@ -59,12 +59,29 @@ class BridgePool:
 
     def for_instance(self, inst):
         # per-instance cfg 视图：共享 base 的 backend/其它设置，覆写这个账号的租户凭据。
+        tenant_id = int(getattr(inst, "tenant_id", 0) or 0)
+        login = getattr(inst, "login", "") or ""
+        password = getattr(inst, "password", "") or ""
+        password_enc = getattr(inst, "password_enc", "") or ""
+        same_identity = (
+            tenant_id == int(getattr(self._base, "tenant_id", 0) or 0)
+            and login == (getattr(self._base, "login", "") or "")
+        )
+        if not password and not password_enc and same_identity:
+            password = getattr(self._base, "password", "") or ""
+            password_enc = getattr(self._base, "password_enc", "") or ""
+        if not password and not password_enc:
+            raise ValueError(
+                f"抖音后端账号 tenant_id={tenant_id} login={login!r} 没有独立凭据，"
+                "且不能继承全局账号凭据"
+            )
         cfg = dataclasses.replace(
             self._base,
-            tenant_id=int(getattr(inst, "tenant_id", 0) or 0),
-            login=getattr(inst, "login", "") or "",
-            password=getattr(inst, "password", "") or "",
-            password_enc=getattr(inst, "password_enc", "") or "")
+            tenant_id=tenant_id,
+            login=login,
+            password=password,
+            password_enc=password_enc,
+        )
         return self._get(cfg)
 
     def all(self) -> list:

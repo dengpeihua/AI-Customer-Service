@@ -1,6 +1,6 @@
 """聊天气泡中的结构化消息渲染器。
 
-所有来自微信的文字都按纯文本显示；链接只允许 http/https，本地附件只在用户点击后打开。
+所有来自抖音私信的文字都按纯文本显示；链接只允许 http/https，本地附件只在用户点击后打开。
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QPixmap
 from PySide6.QtWidgets import QLabel, QPushButton, QVBoxLayout, QWidget
 
-from widget.wechat_media import is_standard_image, read_image_preview
+from widget.message_media import is_standard_image
 
 
 _CARD_LABELS = {
@@ -51,6 +51,67 @@ def _emit_preview_safely(source, data, error: str) -> None:
         pass
 
 
+def _emit_remote_image_safely(source, data, error: str) -> None:
+    """Ignore a late image download after its target widget has been destroyed."""
+    try:
+        source._loaded.emit(data, error)
+    except RuntimeError:
+        pass
+
+
+class RemoteImageLabel(QLabel):
+    """Bounded asynchronous HTTP image preview used by message media and avatars."""
+
+    _loaded = Signal(object, str)
+
+    def __init__(self, url: str, *, width: int, height: int, parent=None):
+        super().__init__(parent)
+        self._width = width
+        self._height = height
+        self.setFixedSize(width, height)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setText("…")
+        self._loaded.connect(self._apply)
+        if is_standard_image(url):
+            try:
+                self._apply(Path(url).read_bytes(), "")
+            except OSError:
+                self.setText("图片暂不可用")
+            return
+        safe_url = _safe_http_url(url)
+        if safe_url:
+            threading.Thread(
+                target=self._download, args=(safe_url,), daemon=True,
+                name="douyin-image-preview",
+            ).start()
+
+    def _download(self, url: str) -> None:
+        try:
+            with httpx.Client(timeout=8.0, follow_redirects=True, trust_env=False) as client:
+                response = client.get(url)
+                response.raise_for_status()
+                data = response.content
+            if len(data) > 8 * 1024 ** 2:
+                raise ValueError("image too large")
+            _emit_remote_image_safely(self, data, "")
+        except Exception:
+            _emit_remote_image_safely(self, None, "图片暂不可用")
+
+    def _apply(self, data, error: str) -> None:
+        if not data:
+            self.setText(error)
+            return
+        pixmap = QPixmap()
+        if not pixmap.loadFromData(data):
+            self.setText("图片暂不可用")
+            return
+        self.setText("")
+        self.setPixmap(pixmap.scaled(
+            self._width, self._height, Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        ))
+
+
 class MessageContent(QWidget):
     """一条消息的内容区；耗时图片解密/下载在后台执行。"""
 
@@ -79,14 +140,23 @@ class MessageContent(QWidget):
             return
         if kind == "video":
             self._layout.addWidget(_plain_label("视频消息"))
+            title = str(self.message.get("title") or self.message.get("text") or "").strip()
+            if title and title != "[视频]":
+                self._layout.addWidget(_plain_label(title, muted=True))
             self._add_image_path(str(self.message.get("thumb_path", "") or ""))
+            remote_preview = _safe_http_url(self.message.get("media_url", ""))
+            if remote_preview:
+                self._layout.addWidget(RemoteImageLabel(remote_preview, width=320, height=220))
             self._add_duration()
-            self._add_local_open("播放视频")
+            if self.message.get("media_path"):
+                self._add_local_open("播放视频")
+            else:
+                self._add_url_open("播放视频", value=self.message.get("video_url", ""))
             return
         if kind == "voice":
             self._layout.addWidget(_plain_label("▶ 语音消息"))
             self._add_duration()
-            self._layout.addWidget(_plain_label("已捕获消息类型；当前微信本地语音编码暂不支持直接播放。", muted=True))
+            self._layout.addWidget(_plain_label("已捕获消息类型；当前抖音私信本地语音编码暂不支持直接播放。", muted=True))
             return
         if kind == "file":
             self._layout.addWidget(_plain_label(self.message.get("title") or self.message.get("text")))
@@ -107,6 +177,11 @@ class MessageContent(QWidget):
                 "padding: 6px; }"
             )
             self._layout.addWidget(quote)
+            remote = _safe_http_url(self.message.get("media_url", ""))
+            if remote:
+                self._layout.addWidget(RemoteImageLabel(remote, width=320, height=220))
+            else:
+                self._add_image_path(str(self.message.get("media_path", "") or ""))
             return
 
         self._layout.addWidget(_plain_label(_CARD_LABELS.get(kind, "应用消息"), muted=True))
@@ -114,6 +189,9 @@ class MessageContent(QWidget):
         description = str(self.message.get("description", "") or "").strip()
         if description:
             self._layout.addWidget(_plain_label(description, muted=True))
+        remote_preview = _safe_http_url(self.message.get("media_url", ""))
+        if remote_preview:
+            self._layout.addWidget(RemoteImageLabel(remote_preview, width=320, height=220))
         self._add_url_open("打开内容")
 
     def _build_image(self, kind: str) -> None:
@@ -130,17 +208,22 @@ class MessageContent(QWidget):
                 if is_standard_image(path):
                     self._apply_preview(Path(path).read_bytes(), "")
                 else:
-                    self._apply_preview(read_image_preview(path), "")
+                    self._preview.setText("该媒体格式暂不支持直接预览。")
             except Exception as exc:
-                self._preview.setText("图片已捕获，但微信本地缓存仍处于加密状态。")
-                self._retry = QPushButton("在微信打开原图后，重试预览")
+                self._preview.setText("图片已捕获，但当前格式暂不可预览。")
+                self._retry = QPushButton("重新读取预览")
                 self._retry.setToolTip(str(exc))
                 self._retry.clicked.connect(self._retry_preview)
                 self._layout.addWidget(self._retry)
             return
-        remote = _safe_http_url(self.message.get("remote_url", "")) if kind == "emoji" else ""
+        remote = _safe_http_url(
+            self.message.get("media_url") or self.message.get("remote_url", "")
+        )
         if remote:
-            self._download_emoji(remote)
+            preview = RemoteImageLabel(remote, width=320, height=220)
+            self._layout.replaceWidget(self._preview, preview)
+            self._preview.deleteLater()
+            self._preview = preview
         else:
             self._preview.setText("已识别这条图片消息，但尚未找到可用的本地预览。")
 
@@ -157,22 +240,23 @@ class MessageContent(QWidget):
 
     def _retry_preview(self) -> None:
         path = str(self.message.get("media_path", "") or "")
-        pid = int(self.message.get("preview_pid") or 0)
         if not path or self._retry is None:
             return
         self._retry.setEnabled(False)
-        self._retry.setText("正在只读查找预览密钥…")
+        self._retry.setText("正在重新读取预览…")
 
         def worker() -> None:
             try:
-                data = read_image_preview(path, pid, scan_live_key=True)
+                if not is_standard_image(path):
+                    raise ValueError("unsupported enterprise media format")
+                data = Path(path).read_bytes()
                 error = ""
             except Exception:
                 data = None
-                error = "仍未找到预览密钥。请在微信里点开这张原图，保持微信开启后再重试。"
+                error = "当前媒体格式暂不可预览。"
             _emit_preview_safely(self, data, error)
 
-        threading.Thread(target=worker, daemon=True, name="wechat-image-preview").start()
+        threading.Thread(target=worker, daemon=True, name="channel-image-preview").start()
 
     def _download_emoji(self, url: str) -> None:
         def worker() -> None:
@@ -189,7 +273,7 @@ class MessageContent(QWidget):
                 error = "表情消息已捕获，但在线预览暂时不可用。"
             _emit_preview_safely(self, data, error)
 
-        threading.Thread(target=worker, daemon=True, name="wechat-emoji-preview").start()
+        threading.Thread(target=worker, daemon=True, name="channel-emoji-preview").start()
 
     def _apply_preview(self, data, error: str) -> None:
         if self._preview is None:
@@ -198,7 +282,7 @@ class MessageContent(QWidget):
             self._preview.setText(error or "预览不可用")
             if self._retry is not None:
                 self._retry.setEnabled(True)
-                self._retry.setText("在微信打开原图后，重试预览")
+                self._retry.setText("重新读取预览")
             return
         pixmap = QPixmap()
         if not pixmap.loadFromData(bytes(data)):
@@ -219,14 +303,14 @@ class MessageContent(QWidget):
     def _add_local_open(self, label: str) -> None:
         path = str(self.message.get("media_path", "") or "")
         if not path or not Path(path).is_file():
-            self._layout.addWidget(_plain_label("本地附件尚未下载完成或已被微信清理。", muted=True))
+            self._layout.addWidget(_plain_label("本地附件尚未下载完成或已被抖音私信清理。", muted=True))
             return
         button = QPushButton(label)
         button.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(path)))
         self._layout.addWidget(button)
 
-    def _add_url_open(self, label: str) -> None:
-        url = _safe_http_url(self.message.get("url", ""))
+    def _add_url_open(self, label: str, *, value: object = "") -> None:
+        url = _safe_http_url(value or self.message.get("url", ""))
         if not url:
             return
         button = QPushButton(label)

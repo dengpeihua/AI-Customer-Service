@@ -27,7 +27,7 @@ def update_customer_profile(
     locally to avoid unnecessary model cost; Mem0 owns fact extraction and ADD/UPDATE/DELETE
     consolidation, while ``CustomerProfile`` is rebuilt as a deterministic view of its memories.
     """
-    _ = llm  # Kept in the public signature for existing chat/wecom call sites.
+    _ = llm  # 保留公共签名，供聊天与渠道调用方兼容。
     text = (customer_text or "").strip()
     if len(text) < settings.profile_min_chars or text.lower() in _STOPWORDS:
         return

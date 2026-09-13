@@ -31,17 +31,17 @@ class CustomerMemoryCrudTests(unittest.TestCase):
 
     def test_memories_are_tenant_scoped_ranked_and_editable(self) -> None:
         low = create_memory(
-            self.db, 1, channel="wechat_personal", contact_id="wxid_a",
+            self.db, 1, channel="douyin#shop_a", contact_id="wxid_a",
             memory_type="note", content="普通备注", source="manual", source_key=None,
             importance=0.2, is_pinned=False,
         )
         create_memory(
-            self.db, 1, channel="wechat_personal", contact_id="wxid_a",
+            self.db, 1, channel="douyin#shop_a", contact_id="wxid_a",
             memory_type="preference", content="偏好深蓝色", source="manual", source_key=None,
             importance=0.9, is_pinned=True,
         )
         create_memory(
-            self.db, 2, channel="wechat_personal", contact_id="wxid_a",
+            self.db, 2, channel="douyin#shop_a", contact_id="wxid_a",
             memory_type="fact", content="其他租户", source="manual", source_key=None,
             importance=1.0, is_pinned=True,
         )
@@ -58,14 +58,14 @@ class CustomerMemoryCrudTests(unittest.TestCase):
 
     def test_profile_memory_is_idempotent_and_available_to_dialog(self) -> None:
         first = upsert_profile_memory(
-            self.db, 1, "wecom_hook", "customer-1", "首次画像"
+            self.db, 1, "douyin#shop_a", "customer-1", "首次画像"
         )
         second = upsert_profile_memory(
-            self.db, 1, "wecom_hook", "customer-1", "更新后的画像"
+            self.db, 1, "douyin#shop_a", "customer-1", "更新后的画像"
         )
 
         self.assertEqual(first.id, second.id)
-        rows = list_contact_memories(self.db, 1, "wecom_hook", "customer-1")
+        rows = list_contact_memories(self.db, 1, "douyin#shop_a", "customer-1")
         self.assertEqual(1, len(rows))
         self.assertEqual("更新后的画像", rows[0].content)
 
@@ -104,7 +104,7 @@ class MemoryPageTests(unittest.TestCase):
 
     def test_page_renders_locomo_stats_messages_and_recall_preview(self) -> None:
         page = MemoryPage(
-            _MemoryBridge(), labels={"wechat_personal": "个人微信"}
+            _MemoryBridge(), labels={"douyin#shop_a": "抖音"}
         )
         try:
             page.refresh()
@@ -120,7 +120,7 @@ class MemoryPageTests(unittest.TestCase):
 
     def test_page_uses_light_surfaces_with_dark_blue_text(self) -> None:
         apply_theme(self.app)
-        page = MemoryPage(_MemoryBridge(), labels={"wechat_personal": "个人微信"})
+        page = MemoryPage(_MemoryBridge(), labels={"douyin#shop_a": "抖音"})
         try:
             page.refresh()
             page.show()

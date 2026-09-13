@@ -57,9 +57,11 @@ class Sender:
         self.limiter = limiter
         self._sleep = sleep_fn
         self._rand = rand_fn
+        self.last_result = None
 
     def deliver(self, contact_id: str, text: str) -> bool:
         """发送 AI/系统自动消息；自动通道永远不携带客户消息引用。"""
+        self.last_result = None
         if not self.cfg.auto_send:
             return False
         if not self.limiter.can_send():
@@ -67,13 +69,27 @@ class Sender:
         delay = self._rand(self.cfg.send_delay_min_s, self.cfg.send_delay_max_s)
         self._sleep(delay)
         res = self.adapter.send_message(contact_id, text, provenance="ai")
-        if res.ok:
+        self.last_result = res
+        if res.ok or bool(getattr(res, "uncertain", False)):
+            # Once a browser side effect may have started, conservatively consume
+            # quota even when the new message bubble could not be confirmed.
             self.limiter.record()
+        if res.ok:
             return True
         return False
 
+    def reconcile_delivery(self, contact_id: str, text: str, since_ts: int) -> str:
+        reconcile = getattr(self.adapter, "reconcile_delivery", None)
+        if callable(reconcile):
+            try:
+                status = str(reconcile(contact_id, text, since_ts))
+            except Exception:
+                return "unknown"
+            return status if status in {"delivered", "not_delivered", "unknown"} else "unknown"
+        return "delivered" if self.was_delivered_since(contact_id, text, since_ts) else "not_delivered"
+
     def was_delivered_since(self, contact_id: str, text: str, since_ts: int) -> bool:
-        """Reconcile an expired delivery lease against authoritative local WeChat history."""
+        """Reconcile an expired delivery lease against authoritative enterprise chat history."""
         read = getattr(self.adapter, "read_conversation", None)
         if read is None:
             return False

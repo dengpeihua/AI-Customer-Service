@@ -167,7 +167,7 @@ class MemoryRecordsPage(_AsyncPage):
         row = QHBoxLayout(editor)
         self._channel = QComboBox()
         channel_rows = self._channels or [
-            ("wechat_personal", "个人微信"), ("wecom_hook", "企业微信")
+            ("douyin#default", "抖音")
         ]
         for key, label in channel_rows:
             self._channel.addItem(label, key)
@@ -431,7 +431,7 @@ class MemoryRecordsPage(_AsyncPage):
     def _selection_changed(self) -> None:
         row = self._selected()
         if not row: return
-        channel = str(row.get("channel") or "wechat_personal")
+        channel = str(row.get("channel") or "douyin#default")
         index = self._channel.findData(channel)
         if index < 0:
             self._channel.addItem(self._labels.get(channel, channel), channel)

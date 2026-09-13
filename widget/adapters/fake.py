@@ -3,9 +3,9 @@ from typing import Callable
 from widget.models import InboundMsg, SendResult
 from widget.reply_quote import quoted_reply_text
 
-class FakeWeChatAdapter:
-    channel = "wechat_personal"
-    def __init__(self, self_id: str = "wxid_me", channel_key: str = "wechat_personal"):
+class FakeChannelAdapter:
+    channel = "douyin#test"
+    def __init__(self, self_id: str = "douyin-test", channel_key: str = "douyin#test"):
         self.channel = channel_key
         self._self_id = self_id
         self._on_message: Callable[[InboundMsg], None] | None = None

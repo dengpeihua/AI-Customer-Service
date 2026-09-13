@@ -1,7 +1,7 @@
 """统一会话控制台的视图模型（无 Qt 依赖，纯逻辑，可单测）。
 
-照 WeiClaw 三栏客服台的信息结构，但补上它没有的**渠道维度**：把个人微信 + 企微两条渠道的
-会话合并成一个列表（每条带渠道徽章），待人工优先置顶。右详情面板的「AI 托管开关」= 会话级
+三栏客服台保留渠道维度：把多个抖音账号的会话合并成一个列表（每条带渠道徽章），
+待人工优先置顶。右详情面板的「AI 托管开关」= 会话级
 转人工/恢复 AI（复用后端 F4 的 ai_muted 标签，引擎已认）。
 
 依赖全部注入，便于测试：
@@ -16,14 +16,14 @@ from __future__ import annotations
 
 class ConversationConsole:
     # legacy 兜底（单实例/未接注册表时的旧文案）；per-instance 场景由注入的 labels 覆盖。
-    CHANNEL_LABELS = {"wechat_personal": "个人微信", "wecom_hook": "企微"}
+    CHANNEL_LABELS = {"douyin": "抖音"}
 
     def __init__(self, hub, state, backend, controller, history_syncer=None, labels=None):
         self.hub = hub
         self.state = state
         self.backend = backend
         self.controller = controller
-        # 企微历史【自动】反哺后台同步器（可选）。有它时 GUI 显示自动同步状态，客户无需点按钮。
+        # 抖音历史【自动】反哺后台同步器（可选）。有它时 GUI 显示自动同步状态，客户无需点按钮。
         self.history_syncer = history_syncer
         # per-instance 标签注册表：{channel_key: display_name}（app 从 instances 注册表建，注入）。
         # 缺省 {} → 回落到 legacy 两平台常量，再回落 raw key（M0 前/单实例行为不变）。
@@ -62,7 +62,7 @@ class ConversationConsole:
                     "last": s.get("last", ""), "ts": s.get("ts", 0),
                     "pending": key in pend,
                 })
-        # 待人工里可能有还没进会话列表的联系人（个人微信从 DB 列会话、企微从 feed），补进来置顶
+        # 待人工里可能有还没进入会话列表的联系人，补进来置顶。
         for p in self._pending():
             key = (p.get("channel", ""), p.get("contact"))
             if key[1] and key not in seen:
@@ -104,14 +104,14 @@ class ConversationConsole:
         return self.controller.send(contact, text, channel)
 
     def summarize(self, channel: str, contact: str) -> dict:
-        """把该会话总结成 FAQ 反哺知识库（双渠道通用；企微新对话已在后端落库即可反哺）。
+        """把该会话总结成 FAQ 反哺知识库（双渠道通用；抖音新对话已在后端落库即可反哺）。
         走后端 /v1/kb/summarize；后端会拒纯寒暄/无实质内容的会话。返回 {title,...} 或抛异常。"""
         return self.backend.summarize_to_kb(channel, contact)
 
-    def history_sync_status(self, channel: str = "wecom_hook") -> dict | None:
-        """企微历史【自动】反哺的实时状态，供 GUI 显示（客户无需点击）。
+    def history_sync_status(self, channel: str = "douyin#default") -> dict | None:
+        """抖音历史【自动】反哺的实时状态，供 GUI 显示（客户无需点击）。
         返回 {'running','synced','batches',...}；没接自动同步器则 None（GUI 隐藏该条）。"""
-        if channel != "wecom_hook" or self.history_syncer is None:
+        if not channel.startswith("douyin#") or self.history_syncer is None:
             return None
         try:
             return self.history_syncer.status()
@@ -120,8 +120,8 @@ class ConversationConsole:
 
     def harvest_history(self, channel: str) -> list[str]:
         """拉该渠道本地库(message.db)解密后的历史聊天正文（连接前历史 + 人工手打）。
-        渠道适配器无此能力（个人微信 / 未接 col_hook）时安全返回 []，绝不抛。
-        注：正常运行走后台自动同步（WeComHistorySyncer），这方法保留供「立即同步」等兜底。"""
+        渠道适配器未接 col_hook 时安全返回 []，绝不抛。
+        正常运行由渠道适配器持续更新；本方法保留给可选的历史同步器。"""
         adapter = self.hub.adapter(channel)
         fn = getattr(adapter, "harvest_history_texts", None)
         if not callable(fn):
@@ -131,7 +131,7 @@ class ConversationConsole:
         except Exception:
             return []
 
-    def harvest_history_to_kb(self, channel: str, title: str = "企微本地历史反哺") -> dict:
+    def harvest_history_to_kb(self, channel: str, title: str = "抖音本地历史反哺") -> dict:
         """拉本地历史 → 后端 LLM 蒸馏成 FAQ 反哺知识库。
         返回 {'count': n, 'title': ...}；无历史时 count=0、不落库、不打后端。"""
         texts = self.harvest_history(channel)

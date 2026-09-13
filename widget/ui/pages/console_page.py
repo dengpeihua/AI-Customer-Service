@@ -14,15 +14,13 @@ from PySide6.QtWidgets import (QCheckBox, QHBoxLayout, QLabel, QListWidget,
                                QVBoxLayout, QWidget)
 from widget.ui.message_content import message_content_widget
 
-_BADGE_OBJ = {"wechat_personal": "BadgeWechat", "wecom_hook": "BadgeWecom",
-              "wechat": "BadgeWechat", "wecom": "BadgeWecom"}
+_BADGE_OBJ = {"douyin": "BadgeDouyin"}
 
 
 def _badge_obj(channel: str) -> str:
     """徽章颜色按**平台**决定，而非完整 channel_key——per-instance 键形如
-    `wecom#a`/`wechat#b`（M0 记法）没有直接命中项，取 `#` 前的平台再查一次；
-    legacy 键（`wechat_personal`/`wecom_hook`）直接命中，行为不变。"""
-    return _BADGE_OBJ.get(channel) or _BADGE_OBJ.get(channel.split("#")[0], "BadgeWecom")
+    `douyin#a` 没有直接命中项时，取 `#` 前的平台再查一次。"""
+    return _BADGE_OBJ.get(channel) or _BADGE_OBJ.get(channel.split("#")[0], "BadgeDouyin")
 
 
 def _bubble_row(message: dict, is_self: bool, provenance: str = "") -> QWidget:
@@ -106,7 +104,7 @@ class ConsolePage(QWidget):
         self._summarize_btn = QPushButton("总结这段对话 → 反哺知识库")
         self._summarize_btn.setObjectName("Ghost"); self._summarize_btn.clicked.connect(self._on_summarize)
         right.addWidget(self._summarize_btn)
-        # 企微本地库历史反哺 = **后台自动同步**（客户不用点任何按钮），这里只被动显示状态。
+        # 抖音本地库历史反哺 = **后台自动同步**（客户不用点任何按钮），这里只被动显示状态。
         self._sync_status = QLabel(""); self._sync_status.setObjectName("Muted")
         self._sync_status.setWordWrap(True); self._sync_status.setVisible(False)
         right.addWidget(self._sync_status)
@@ -142,7 +140,7 @@ class ConsolePage(QWidget):
             return
         channel, contact = key
         self._current = {"channel": channel, "contact": contact}
-        self._render_sync_status(channel)          # 企微：显示历史自动同步状态（不用点按钮）
+        self._render_sync_status(channel)          # 抖音：显示历史自动同步状态（不用点按钮）
         label = self.model.channel_label(channel)
         self._title.setText(f"{contact}  ·  {label}")
         self._who.setText(f"{contact}\n渠道：{label}")
@@ -193,13 +191,13 @@ class ConsolePage(QWidget):
             self._status.setText(f"反哺失败：{e}")
 
     def _render_sync_status(self, channel: str) -> None:
-        """企微会话：被动显示本地库历史【自动】反哺状态（后台线程在跑，客户无需点击）。"""
+        """抖音会话：被动显示本地库历史【自动】反哺状态（后台线程在跑，客户无需点击）。"""
         st = self.model.history_sync_status(channel)
-        if st is None:                                   # 非企微 / 未接自动同步器 → 隐藏
+        if st is None:                                   # 非抖音 / 未接自动同步器 → 隐藏
             self._sync_status.setVisible(False)
             return
         running = "自动同步中" if st.get("running") else "未运行"
-        self._sync_status.setText(f"企微历史反哺：{running} · 已反哺 {st.get('synced', 0)} 条")
+        self._sync_status.setText(f"抖音历史反哺：{running} · 已反哺 {st.get('synced', 0)} 条")
         self._sync_status.setVisible(True)
 
     def _on_send(self) -> None:

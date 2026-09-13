@@ -34,8 +34,8 @@ class OpsServiceTests(unittest.TestCase):
         self.db = Session(self.engine)
         self.db.add_all([Tenant(id=1, name="A"), Tenant(id=2, name="B")])
         self.db.flush()
-        a_conv = Conversation(tenant_id=1, channel="wechat_personal", contact_id="wxid_a")
-        b_conv = Conversation(tenant_id=2, channel="wechat_personal", contact_id="wxid_b")
+        a_conv = Conversation(tenant_id=1, channel="douyin#shop_a", contact_id="wxid_a")
+        b_conv = Conversation(tenant_id=2, channel="douyin#shop_a", contact_id="wxid_b")
         self.db.add_all([a_conv, b_conv])
         self.db.flush()
         self.db.add_all([
@@ -43,9 +43,9 @@ class OpsServiceTests(unittest.TestCase):
                     provenance="customer", text="tenant-a-event", meta={}),
             Message(tenant_id=2, conversation_id=b_conv.id, direction="in", sender="customer",
                     provenance="customer", text="tenant-b-secret", meta={}),
-            CustomerMemory(tenant_id=1, channel="wechat_personal", contact_id="wxid_a",
+            CustomerMemory(tenant_id=1, channel="douyin#shop_a", contact_id="wxid_a",
                            memory_type="preference", content="喜欢蓝色", source="manual"),
-            CustomerMemory(tenant_id=2, channel="wechat_personal", contact_id="wxid_b",
+            CustomerMemory(tenant_id=2, channel="douyin#shop_a", contact_id="wxid_b",
                            memory_type="fact", content="其他租户秘密", source="manual"),
         ])
         doc_a = KbDocument(tenant_id=1, title="A文档", source_type="faq", status="ready")
@@ -85,7 +85,7 @@ class OpsServiceTests(unittest.TestCase):
         overview = ops_overview(self.db, 1, registry=OpsTaskRegistry())
 
         gateway = overview["model_gateway"]
-        self.assertIn(gateway["provider"], {"fake", "dashscope", "deepseek"})
+        self.assertIn(gateway["provider"], {"fake", "deepseek", "minimax", "glm"})
         self.assertTrue(gateway["chat_model"])
         self.assertTrue(gateway["embedding_model"])
         self.assertNotIn("api_key", str(gateway).lower())
@@ -119,7 +119,7 @@ class OpsServiceTests(unittest.TestCase):
         foreign = self.db.query(Conversation).filter(Conversation.tenant_id == 2).one()
         self.db.add(Deal(
             tenant_id=1, conversation_id=own.id, contact_id="wxid_a",
-            channel="wechat_personal",
+            channel="douyin#shop_a",
         ))
         self.db.commit()
 

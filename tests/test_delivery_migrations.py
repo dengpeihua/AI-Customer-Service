@@ -20,11 +20,11 @@ class DeliveryMigrationTests(unittest.TestCase):
         bind = MagicMock()
         bind.execute.return_value.mappings.return_value.all.return_value = [
             {"id": 1, "tenant_id": 7, "source_message_id": "raw-42",
-             "channel": "wechat_personal", "contact_id": "wxid_a"},
+             "channel": "douyin#shop_a", "contact_id": "wxid_a"},
             {"id": 2, "tenant_id": 7, "source_message_id": "raw-42",
-             "channel": "wechat_personal", "contact_id": "wxid_a"},
+             "channel": "douyin#shop_a", "contact_id": "wxid_a"},
             {"id": 3, "tenant_id": 7, "source_message_id": "raw-42",
-             "channel": "wechat_personal", "contact_id": "wxid_b"},
+             "channel": "douyin#shop_a", "contact_id": "wxid_b"},
         ]
         batch = MagicMock()
 
@@ -36,8 +36,8 @@ class DeliveryMigrationTests(unittest.TestCase):
             migration.upgrade()
 
         updates = [call.args[1] for call in bind.execute.call_args_list[1:]]
-        digest_a = hashlib.sha256(b"wechat_personal\0wxid_a\0raw-42").hexdigest()
-        digest_b = hashlib.sha256(b"wechat_personal\0wxid_b\0raw-42").hexdigest()
+        digest_a = hashlib.sha256(b"douyin#shop_a\0wxid_a\0raw-42").hexdigest()
+        digest_b = hashlib.sha256(b"douyin#shop_a\0wxid_b\0raw-42").hexdigest()
         self.assertEqual(
             [
                 {"value": digest_a, "id": 1},

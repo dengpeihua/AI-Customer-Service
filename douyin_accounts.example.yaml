@@ -1,0 +1,27 @@
+# 复制为 douyin_accounts.yaml。抖音登录状态保存在每个账号独立的 Chrome Profile 中，
+# 不要在本文件填写 Cookie，也不要提交真实账号配置、Profile 或客户数据。
+accounts:
+  - account_id: personal_a
+    display_name: 抖音个人号 A
+    tenant_id: 1
+    login: admin
+    # 后端登录密码请用 `python -m widget.secret <密码>` 生成 DPAPI 密文。
+    password_enc: ""
+    enabled: true
+
+    # 首次启动会打开系统 Chrome；请在窗口里手工登录目标个人号。
+    messages_url: https://www.douyin.com/
+    browser_channel: chrome
+    profile_dir: ""
+    headless: false
+    # 首次登录后从“抖音私信”页复制 16 位身份指纹到这里，再重启；未绑定时不收也不发。
+    expected_identity_fingerprint: ""
+    poll_interval_s: 3
+    navigation_timeout_s: 30
+
+    # false：首次接入只建立基线，不把已有未读消息送入 AI。
+    process_existing_messages: false
+    # 真实发送的账号级开关（含人工手动回复）；AI 自动发送还需全局 auto_send=true。
+    # 首次联调保持 false。
+    send_enabled: false
+    data_dir: data/douyin/personal_a

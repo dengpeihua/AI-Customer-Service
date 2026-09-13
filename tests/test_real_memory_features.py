@@ -99,9 +99,9 @@ class CustomerMemoryServiceTests(unittest.TestCase):
         self.engine.dispose()
 
     def test_mem0_scope_is_tenant_and_contact_scoped_without_raw_contact_id(self) -> None:
-        first = memory_user_scope(7, "wechat_personal", "wxid_private_person")
-        second = memory_user_scope(7, "wechat_personal", "wxid_private_person")
-        other_tenant = memory_user_scope(8, "wechat_personal", "wxid_private_person")
+        first = memory_user_scope(7, "douyin#shop_a", "wxid_private_person")
+        second = memory_user_scope(7, "douyin#shop_a", "wxid_private_person")
+        other_tenant = memory_user_scope(8, "douyin#shop_a", "wxid_private_person")
 
         self.assertEqual(first, second)
         self.assertNotEqual(first, other_tenant)
@@ -121,7 +121,7 @@ class CustomerMemoryServiceTests(unittest.TestCase):
 
         service = CustomerMemoryService(NoopGateway())
         result = service.ingest_conversation(
-            self.db, tenant_id=1, channel="wechat_personal", contact_id="friend-noop",
+            self.db, tenant_id=1, channel="douyin#shop_a", contact_id="friend-noop",
             messages=[{"key": "greeting-1", "role": "user", "content": "谢谢，收到", "timestamp": 1}],
         )
         self.assertEqual("completed", result["status"])
@@ -135,7 +135,7 @@ class CustomerMemoryServiceTests(unittest.TestCase):
 
     def test_memory_history_resolves_remote_id_with_contact_scope(self) -> None:
         self.service.ingest_conversation(
-            self.db, tenant_id=1, channel="wechat_personal", contact_id="friend-history",
+            self.db, tenant_id=1, channel="douyin#shop_a", contact_id="friend-history",
             messages=[{"key": "m1", "role": "user", "content": "我喜欢深蓝色", "timestamp": 1}],
         )
         memory = self.db.query(CustomerMemory).filter(
@@ -145,18 +145,18 @@ class CustomerMemoryServiceTests(unittest.TestCase):
         self.assertEqual("UPDATE", rows[0]["event"])
         self.assertEqual("pref-1", self.gateway.history_calls[0][0])
         self.assertEqual(
-            memory_user_scope(1, "wechat_personal", "friend-history"),
+            memory_user_scope(1, "douyin#shop_a", "friend-history"),
             self.gateway.history_calls[0][1],
         )
         self.assertIsNone(self.service.memory_history(self.db, tenant_id=2, memory_id=memory.id))
 
     def test_semantic_delete_removes_only_scoped_local_mirror_and_keeps_audit(self) -> None:
         target = CustomerMemory(
-            tenant_id=1, channel="wechat_personal", contact_id="friend-delete",
+            tenant_id=1, channel="douyin#shop_a", contact_id="friend-delete",
             memory_type="fact", content="旧事实", source="mem0", source_key="mem0:gone-1",
         )
         other = CustomerMemory(
-            tenant_id=1, channel="wechat_personal", contact_id="other-friend",
+            tenant_id=1, channel="douyin#shop_a", contact_id="other-friend",
             memory_type="fact", content="其他联系人事实", source="mem0", source_key="mem0:gone-1",
         )
         self.db.add_all([target, other]); self.db.commit()
@@ -165,11 +165,11 @@ class CustomerMemoryServiceTests(unittest.TestCase):
             "memory": "旧事实", "reason": "客户明确否定",
         }]
         self.service._record_semantic_decisions(
-            self.db, tenant_id=1, channel="wechat_personal", contact_id="friend-delete",
+            self.db, tenant_id=1, channel="douyin#shop_a", contact_id="friend-delete",
             decision_batch_id="delete-test", results=decisions,
         )
         self.service._apply_remote_deletes(
-            self.db, tenant_id=1, channel="wechat_personal", contact_id="friend-delete",
+            self.db, tenant_id=1, channel="douyin#shop_a", contact_id="friend-delete",
             decisions=decisions,
         )
         self.db.commit()
@@ -219,7 +219,7 @@ class CustomerMemoryServiceTests(unittest.TestCase):
         }]
 
         first = service.ingest_conversation(
-            self.db, tenant_id=1, channel="wechat_personal",
+            self.db, tenant_id=1, channel="douyin#shop_a",
             contact_id="friend-reingest", messages=messages,
         )
         first_memory_id = first["memories"][0]["id"]
@@ -232,16 +232,16 @@ class CustomerMemoryServiceTests(unittest.TestCase):
         self.assertEqual(0, deleted_state.messages_processed)
 
         recreated = service.ingest_conversation(
-            self.db, tenant_id=1, channel="wechat_personal",
+            self.db, tenant_id=1, channel="douyin#shop_a",
             contact_id="friend-reingest", messages=messages,
         )
         recalled = service.recall(
-            tenant_id=1, channel="wechat_personal", contact_id="friend-reingest",
+            tenant_id=1, channel="douyin#shop_a", contact_id="friend-reingest",
             query="喜欢什么颜色", limit=5,
         )
         governed = self.db.query(CustomerMemory).filter(
             CustomerMemory.tenant_id == 1,
-            CustomerMemory.channel == "wechat_personal",
+            CustomerMemory.channel == "douyin#shop_a",
             CustomerMemory.contact_id == "friend-reingest",
         ).all()
 
@@ -262,7 +262,7 @@ class CustomerMemoryServiceTests(unittest.TestCase):
 
     def test_manual_governance_crud_records_add_update_delete_semantics(self) -> None:
         memory = self.service.create_manual_memory(
-            self.db, tenant_id=1, channel="wechat_personal", contact_id="friend-manual",
+            self.db, tenant_id=1, channel="douyin#shop_a", contact_id="friend-manual",
             memory_type="preference", content="喜欢蓝色",
         )
         self.service.update_memory(
@@ -286,14 +286,14 @@ class CustomerMemoryServiceTests(unittest.TestCase):
             "content": "我偏好简洁回复", "timestamp": 1,
         }]
         first = self.service.ingest_conversation(
-            self.db, tenant_id=1, channel="wechat_personal",
+            self.db, tenant_id=1, channel="douyin#shop_a",
             contact_id="friend-legacy-delete", messages=messages,
         )
         for memory in self.db.query(CustomerMemory).all():
             self.db.delete(memory)
         self.gateway.memories = []
         self.db.add(MemoryOperation(
-            tenant_id=1, channel="wechat_personal", contact_id="friend-legacy-delete",
+            tenant_id=1, channel="douyin#shop_a", contact_id="friend-legacy-delete",
             operation_id="legacy-delete-operation", kind="delete",
             payload={"memory_id": first["memories"][0]["id"], "remote_id": "pref-1"},
             status="completed", attempts=1,
@@ -305,7 +305,7 @@ class CustomerMemoryServiceTests(unittest.TestCase):
         }]
 
         recreated = self.service.ingest_conversation(
-            self.db, tenant_id=1, channel="wechat_personal",
+            self.db, tenant_id=1, channel="douyin#shop_a",
             contact_id="friend-legacy-delete", messages=messages,
         )
 
@@ -349,11 +349,11 @@ class CustomerMemoryServiceTests(unittest.TestCase):
             "content": "我正在寻找本地部署方案", "timestamp": 2,
         }]
         service.ingest_conversation(
-            self.db, tenant_id=1, channel="wechat_personal",
+            self.db, tenant_id=1, channel="douyin#shop_a",
             contact_id="friend-two-batches", messages=first_message,
         )
         service.ingest_conversation(
-            self.db, tenant_id=1, channel="wechat_personal",
+            self.db, tenant_id=1, channel="douyin#shop_a",
             contact_id="friend-two-batches", messages=second_message,
         )
         color = self.db.scalar(select(CustomerMemory).where(
@@ -365,21 +365,21 @@ class CustomerMemoryServiceTests(unittest.TestCase):
         remaining_keys = self.db.scalars(select(MemoryIngestedMessage.message_key)).all()
         self.assertEqual(2, len(remaining_keys))
         retried = service.ingest_conversation(
-            self.db, tenant_id=1, channel="wechat_personal",
+            self.db, tenant_id=1, channel="douyin#shop_a",
             contact_id="friend-two-batches", messages=first_message + second_message,
         )
         self.assertEqual(1, retried["processed_messages"])
 
     def test_deleting_manual_memory_does_not_release_conversation_dedupe_ledger(self) -> None:
         self.service.ingest_conversation(
-            self.db, tenant_id=1, channel="wechat_personal", contact_id="friend-manual-delete",
+            self.db, tenant_id=1, channel="douyin#shop_a", contact_id="friend-manual-delete",
             messages=[{
                 "key": "conversation-source", "role": "user",
                 "content": "我喜欢深蓝色", "timestamp": 1,
             }],
         )
         manual = CustomerMemory(
-            tenant_id=1, channel="wechat_personal", contact_id="friend-manual-delete",
+            tenant_id=1, channel="douyin#shop_a", contact_id="friend-manual-delete",
             memory_type="note", content="人工备注", source="manual", source_key=None,
         )
         self.db.add(manual)
@@ -417,14 +417,14 @@ class CustomerMemoryServiceTests(unittest.TestCase):
 
         service = CustomerMemoryService(UpdatingGateway())
         service.ingest_conversation(
-            self.db, tenant_id=1, channel="wechat_personal", contact_id="friend-update",
+            self.db, tenant_id=1, channel="douyin#shop_a", contact_id="friend-update",
             messages=[{
                 "key": "add-source", "role": "user",
                 "content": "我喜欢深蓝色", "timestamp": 1,
             }],
         )
         service.ingest_conversation(
-            self.db, tenant_id=1, channel="wechat_personal", contact_id="friend-update",
+            self.db, tenant_id=1, channel="douyin#shop_a", contact_id="friend-update",
             messages=[{
                 "key": "update-source", "role": "user",
                 "content": "我还偏好简洁回复", "timestamp": 2,
@@ -450,27 +450,27 @@ class CustomerMemoryServiceTests(unittest.TestCase):
     def test_delete_semantic_decisions_is_batch_scoped_to_the_current_tenant(self) -> None:
         rows = [
             MemoryOperation(
-                tenant_id=1, channel="wechat_personal", contact_id="friend-a",
+                tenant_id=1, channel="douyin#shop_a", contact_id="friend-a",
                 operation_id="decision-a", kind="semantic_decision",
                 payload={"event": "ADD"}, status="completed",
             ),
             MemoryOperation(
-                tenant_id=1, channel="wechat_personal", contact_id="friend-a",
+                tenant_id=1, channel="douyin#shop_a", contact_id="friend-a",
                 operation_id="decision-b", kind="semantic_decision",
                 payload={"event": "UPDATE"}, status="completed",
             ),
             MemoryOperation(
-                tenant_id=2, channel="wechat_personal", contact_id="friend-b",
+                tenant_id=2, channel="douyin#shop_a", contact_id="friend-b",
                 operation_id="decision-other-tenant", kind="semantic_decision",
                 payload={"event": "DELETE"}, status="completed",
             ),
             MemoryOperation(
-                tenant_id=1, channel="wechat_personal", contact_id="friend-a",
+                tenant_id=1, channel="douyin#shop_a", contact_id="friend-a",
                 operation_id="non-decision", kind="memory_create",
                 payload={}, status="completed",
             ),
             MemoryOperation(
-                tenant_id=1, channel="wechat_personal", contact_id="friend-a",
+                tenant_id=1, channel="douyin#shop_a", contact_id="friend-a",
                 operation_id="pending-decision", kind="semantic_decision",
                 payload={"event": "ADD"}, status="pending",
             ),
@@ -501,11 +501,11 @@ class CustomerMemoryServiceTests(unittest.TestCase):
         ]
 
         first = self.service.ingest_conversation(
-            self.db, tenant_id=1, channel="wechat_personal", contact_id="wxid_a",
+            self.db, tenant_id=1, channel="douyin#shop_a", contact_id="wxid_a",
             messages=messages, display_name="小林",
         )
         second = self.service.ingest_conversation(
-            self.db, tenant_id=1, channel="wechat_personal", contact_id="wxid_a",
+            self.db, tenant_id=1, channel="douyin#shop_a", contact_id="wxid_a",
             messages=messages, display_name="小林",
         )
 
@@ -528,7 +528,7 @@ class CustomerMemoryServiceTests(unittest.TestCase):
         self.service.remember_exchange(
             self.db,
             tenant_id=1,
-            channel="wechat_personal",
+            channel="douyin#shop_a",
             contact_id="wxid_live_manual",
             customer_text="我有一只小狗叫麻将，它是一只很乖的小狗",
             reply_text="听起来麻将真的很可爱",
@@ -538,17 +538,17 @@ class CustomerMemoryServiceTests(unittest.TestCase):
         result = self.service.ingest_conversation(
             self.db,
             tenant_id=1,
-            channel="wechat_personal",
+            channel="douyin#shop_a",
             contact_id="wxid_live_manual",
             messages=[
                 {
-                    "key": "local-wechat-9001",
+                    "key": "local-douyin-9001",
                     "role": "user",
                     "content": "我有一只小狗叫麻将，它是一只很乖的小狗",
                     "timestamp": 100,
                 },
                 {
-                    "key": "local-wechat-9002",
+                    "key": "local-douyin-9002",
                     "role": "assistant",
                     "content": "听起来麻将真的很可爱",
                     "timestamp": 101,
@@ -571,7 +571,7 @@ class CustomerMemoryServiceTests(unittest.TestCase):
         self.service.remember_exchange(
             self.db,
             tenant_id=1,
-            channel="wechat_personal",
+            channel="douyin#shop_a",
             contact_id="wxid_live_manual",
             customer_text="我有一只小狗叫麻将，它是一只很乖的小狗",
             reply_text="听起来麻将真的很可爱",
@@ -583,7 +583,7 @@ class CustomerMemoryServiceTests(unittest.TestCase):
         self.service.remember_exchange(
             self.db,
             tenant_id=1,
-            channel="wechat_personal",
+            channel="douyin#shop_a",
             contact_id="wxid_mixed_manual",
             customer_text="我和我弟弟感情很好",
             exchange_id="chat-message:201",
@@ -592,17 +592,17 @@ class CustomerMemoryServiceTests(unittest.TestCase):
         result = self.service.ingest_conversation(
             self.db,
             tenant_id=1,
-            channel="wechat_personal",
+            channel="douyin#shop_a",
             contact_id="wxid_mixed_manual",
             messages=[
                 {
-                    "key": "local-wechat-9101",
+                    "key": "local-douyin-9101",
                     "role": "user",
                     "content": "我和我弟弟感情很好",
                     "timestamp": 200,
                 },
                 {
-                    "key": "local-wechat-9102",
+                    "key": "local-douyin-9102",
                     "role": "user",
                     "content": "我最近开始学习摄影",
                     "timestamp": 201,
@@ -631,7 +631,7 @@ class CustomerMemoryServiceTests(unittest.TestCase):
             service.remember_exchange(
                 self.db,
                 tenant_id=1,
-                channel="wechat_personal",
+                channel="douyin#shop_a",
                 contact_id="wxid_live_empty",
                 customer_text="我有一只小狗叫麻将",
                 exchange_id="chat-message:empty",
@@ -652,7 +652,7 @@ class CustomerMemoryServiceTests(unittest.TestCase):
             self.service.ingest_conversation(
                 self.db,
                 tenant_id=1,
-                channel="wechat_personal",
+                channel="douyin#shop_a",
                 contact_id="wxid_empty",
                 messages=messages,
             )
@@ -676,7 +676,7 @@ class CustomerMemoryServiceTests(unittest.TestCase):
             service.ingest_conversation(
                 self.db,
                 tenant_id=1,
-                channel="wechat_personal",
+                channel="douyin#shop_a",
                 contact_id="wxid_existing_profile",
                 messages=[{
                     "key": "new-fact-1",
@@ -691,13 +691,13 @@ class CustomerMemoryServiceTests(unittest.TestCase):
     def test_new_extractor_version_can_retry_messages_consumed_by_legacy_empty_run(self) -> None:
         self.db.add(MemoryIngestedMessage(
             tenant_id=1,
-            channel="wechat_personal",
+            channel="douyin#shop_a",
             contact_id="wxid_legacy_empty",
             message_key="legacy-message-1",
         ))
         self.db.add(MemorySyncState(
             tenant_id=1,
-            channel="wechat_personal",
+            channel="douyin#shop_a",
             contact_id="wxid_legacy_empty",
             messages_processed=100,
             last_status="completed",
@@ -707,7 +707,7 @@ class CustomerMemoryServiceTests(unittest.TestCase):
         result = self.service.ingest_conversation(
             self.db,
             tenant_id=1,
-            channel="wechat_personal",
+            channel="douyin#shop_a",
             contact_id="wxid_legacy_empty",
             messages=[{
                 "key": "legacy-message-1",
@@ -732,11 +732,11 @@ class CustomerMemoryServiceTests(unittest.TestCase):
         ]
 
         first = self.service.ingest_conversation(
-            self.db, tenant_id=1, channel="wechat_personal", contact_id="wxid_selective",
+            self.db, tenant_id=1, channel="douyin#shop_a", contact_id="wxid_selective",
             messages=first_selection,
         )
         second = self.service.ingest_conversation(
-            self.db, tenant_id=1, channel="wechat_personal", contact_id="wxid_selective",
+            self.db, tenant_id=1, channel="douyin#shop_a", contact_id="wxid_selective",
             messages=later_selection,
         )
 
@@ -749,16 +749,16 @@ class CustomerMemoryServiceTests(unittest.TestCase):
 
     def test_identity_is_canonicalized_before_database_and_mem0_use(self) -> None:
         result = self.service.ingest_conversation(
-            self.db, tenant_id=1, channel=" wechat_personal ", contact_id=" wxid_trim ",
+            self.db, tenant_id=1, channel=" douyin#shop_a ", contact_id=" wxid_trim ",
             messages=[{"key": "m1", "role": "user", "content": "稳定事实", "timestamp": 1}],
         )
 
-        self.assertEqual("wechat_personal", result["channel"])
+        self.assertEqual("douyin#shop_a", result["channel"])
         self.assertEqual("wxid_trim", result["contact_id"])
 
     def test_recall_searches_only_the_selected_real_contact(self) -> None:
         result = self.service.recall(
-            tenant_id=3, channel="wechat_personal", contact_id="wxid_selected",
+            tenant_id=3, channel="douyin#shop_a", contact_id="wxid_selected",
             query="他喜欢什么颜色？", limit=6,
         )
 
@@ -774,7 +774,7 @@ class CustomerMemoryServiceTests(unittest.TestCase):
         ]
 
         result = self.service.ingest_conversation(
-            self.db, tenant_id=1, channel="wechat_personal", contact_id="wxid_large",
+            self.db, tenant_id=1, channel="douyin#shop_a", contact_id="wxid_large",
             messages=messages,
         )
 
@@ -793,7 +793,7 @@ class CustomerMemoryServiceTests(unittest.TestCase):
         def ingest():
             with Session(engine, autoflush=False) as db:
                 return service.ingest_conversation(
-                    db, tenant_id=9, channel="wechat_personal", contact_id="wxid_lock",
+                    db, tenant_id=9, channel="douyin#shop_a", contact_id="wxid_lock",
                     messages=messages,
                 )["processed_messages"]
 
@@ -824,13 +824,13 @@ class CustomerMemoryServiceTests(unittest.TestCase):
         ]
         with self.assertRaises(RuntimeError):
             service.ingest_conversation(
-                self.db, tenant_id=4, channel="wechat_personal",
+                self.db, tenant_id=4, channel="douyin#shop_a",
                 contact_id="wxid_resume", messages=messages,
             )
         gateway.fail_on_call = -1
 
         resumed = service.ingest_conversation(
-            self.db, tenant_id=4, channel="wechat_personal",
+            self.db, tenant_id=4, channel="douyin#shop_a",
             contact_id="wxid_resume", messages=messages,
         )
 
@@ -853,7 +853,7 @@ class CustomerMemoryServiceTests(unittest.TestCase):
         try:
             with self.assertRaises(RuntimeError):
                 self.service.create_manual_memory(
-                    self.db, tenant_id=1, channel="wechat_personal", contact_id="wxid_saga",
+                    self.db, tenant_id=1, channel="douyin#shop_a", contact_id="wxid_saga",
                     memory_type="note", content="recoverable note",
                 )
         finally:
@@ -862,14 +862,14 @@ class CustomerMemoryServiceTests(unittest.TestCase):
         operation = self.db.query(MemoryOperation).one()
         self.assertEqual("failed", operation.status)
         profile = self.service.list_profile(
-            self.db, tenant_id=1, channel="wechat_personal", contact_id="wxid_saga"
+            self.db, tenant_id=1, channel="douyin#shop_a", contact_id="wxid_saga"
         )
         self.assertEqual("completed", self.db.get(MemoryOperation, operation.id).status)
         self.assertIn("recoverable note", profile["summary"])
 
     def test_update_recovers_from_persistent_outbox_after_commit_failure(self) -> None:
         memory = CustomerMemory(
-            tenant_id=1, channel="wechat_personal", contact_id="wxid_saga",
+            tenant_id=1, channel="douyin#shop_a", contact_id="wxid_saga",
             memory_type="fact", content="old content", source="mem0", source_key="mem0:remote-1",
             importance=0.5, is_pinned=False,
         )
@@ -895,14 +895,14 @@ class CustomerMemoryServiceTests(unittest.TestCase):
             self.db.commit = original_commit
 
         self.service.list_profile(
-            self.db, tenant_id=1, channel="wechat_personal", contact_id="wxid_saga"
+            self.db, tenant_id=1, channel="douyin#shop_a", contact_id="wxid_saga"
         )
         self.assertEqual("new content", self.db.get(CustomerMemory, memory.id).content)
         self.assertEqual(2, len(self.gateway.updated))
 
     def test_delete_recovers_from_persistent_outbox_after_commit_failure(self) -> None:
         memory = CustomerMemory(
-            tenant_id=1, channel="wechat_personal", contact_id="wxid_delete_saga",
+            tenant_id=1, channel="douyin#shop_a", contact_id="wxid_delete_saga",
             memory_type="note", content="delete safely", source="mem0", source_key="mem0:remote-delete",
             importance=0.5, is_pinned=False,
         )
@@ -928,18 +928,18 @@ class CustomerMemoryServiceTests(unittest.TestCase):
 
         self.assertIsNotNone(self.db.get(CustomerMemory, memory_id))
         self.service.list_profile(
-            self.db, tenant_id=1, channel="wechat_personal", contact_id="wxid_delete_saga"
+            self.db, tenant_id=1, channel="douyin#shop_a", contact_id="wxid_delete_saga"
         )
         self.assertIsNone(self.db.get(CustomerMemory, memory_id))
         self.assertIn("remote-delete", self.gateway.deleted)
 
     def test_delete_mem0_memory_removes_remote_before_local_record(self) -> None:
         self.service.ingest_conversation(
-            self.db, tenant_id=1, channel="wechat_personal", contact_id="wxid_a",
+            self.db, tenant_id=1, channel="douyin#shop_a", contact_id="wxid_a",
             messages=[{"key": "m1", "role": "user", "content": "喜欢深蓝色", "timestamp": 100}],
         )
         profile_memories = self.service.list_profile(
-            self.db, tenant_id=1, channel="wechat_personal", contact_id="wxid_a"
+            self.db, tenant_id=1, channel="douyin#shop_a", contact_id="wxid_a"
         )["memories"]
         preference = next(row for row in profile_memories if "深蓝色" in row["content"])
         memory_id = first_id = preference["id"]
@@ -949,31 +949,31 @@ class CustomerMemoryServiceTests(unittest.TestCase):
         self.assertTrue(removed)
         self.assertIn("pref-1", self.gateway.deleted)
         remaining_ids = [row["id"] for row in self.service.list_profile(
-            self.db, tenant_id=1, channel="wechat_personal", contact_id="wxid_a"
+            self.db, tenant_id=1, channel="douyin#shop_a", contact_id="wxid_a"
         )["memories"]]
         self.assertNotIn(first_id, remaining_ids)
 
     def test_existing_manual_memory_without_source_key_remains_in_long_term_profile(self) -> None:
         create_memory(
-            self.db, 1, channel="wechat_personal", contact_id="wxid_legacy",
+            self.db, 1, channel="douyin#shop_a", contact_id="wxid_legacy",
             memory_type="note", content="迁移前人工备注", source="manual",
             source_key=None, importance=0.6, is_pinned=False,
         )
 
         profile = self.service.list_profile(
-            self.db, tenant_id=1, channel="wechat_personal", contact_id="wxid_legacy"
+            self.db, tenant_id=1, channel="douyin#shop_a", contact_id="wxid_legacy"
         )
 
         self.assertEqual(["迁移前人工备注"], [row["content"] for row in profile["memories"]])
 
     def test_manual_memory_updates_profile_with_production_autoflush_disabled(self) -> None:
         created = self.service.create_manual_memory(
-            self.db, tenant_id=1, channel="wechat_personal", contact_id="wxid_manual",
+            self.db, tenant_id=1, channel="douyin#shop_a", contact_id="wxid_manual",
             memory_type="preference", content="偏好简洁回复", importance=0.8,
         )
 
         profile = self.service.list_profile(
-            self.db, tenant_id=1, channel="wechat_personal", contact_id="wxid_manual"
+            self.db, tenant_id=1, channel="douyin#shop_a", contact_id="wxid_manual"
         )
         self.assertEqual(created.id, profile["memories"][0]["id"])
         self.assertIn("偏好简洁回复", profile["summary"])
@@ -982,7 +982,7 @@ class CustomerMemoryServiceTests(unittest.TestCase):
     def test_pin_update_is_flushed_before_top_twelve_profile_rebuild(self) -> None:
         for index in range(13):
             self.db.add(CustomerMemory(
-                tenant_id=1, channel="wechat_personal", contact_id="wxid_rank",
+                tenant_id=1, channel="douyin#shop_a", contact_id="wxid_rank",
                 memory_type="fact", content=f"事实 {index}", source="manual",
                 importance=0.9 if index < 12 else 0.1, is_pinned=False,
             ))
@@ -999,8 +999,8 @@ class CustomerMemoryServiceTests(unittest.TestCase):
 
 class MemoryRequestValidationTests(unittest.TestCase):
     def test_whitespace_is_stripped_and_empty_values_are_rejected(self) -> None:
-        body = MemoryCreate(channel=" wechat_personal ", contact_id=" wxid_a ", content=" note ")
-        self.assertEqual("wechat_personal", body.channel)
+        body = MemoryCreate(channel=" douyin#shop_a ", contact_id=" wxid_a ", content=" note ")
+        self.assertEqual("douyin#shop_a", body.channel)
         self.assertEqual("wxid_a", body.contact_id)
         with self.assertRaises(ValidationError):
             MemoryCreate(channel="   ", contact_id="wxid_a", content="note")
@@ -1044,7 +1044,7 @@ class MemoryConversationNormalizationTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.app = QApplication.instance() or QApplication([])
 
-    def test_real_wechat_history_is_normalized_for_mem0_without_media_noise(self) -> None:
+    def test_real_douyin_history_is_normalized_for_mem0_without_media_noise(self) -> None:
         rows = normalize_history_messages([
             {"local_id": 1, "ts": 100, "is_self": False, "text": "我喜欢蓝色", "type": "text"},
             {"local_id": 2, "ts": 101, "is_self": True, "text": "好的", "type": "text"},
@@ -1349,7 +1349,7 @@ class MemoryConversationNormalizationTests(unittest.TestCase):
         bridge = Bridge(WidgetConfig(), client=client)
         bridge.token = "test-token"
         bridge.ingest_memory_conversation(
-            "wechat_personal", "wxid_timeout",
+            "douyin#shop_a", "wxid_timeout",
             [{"key": "1", "role": "user", "content": "记住我", "timestamp": 1}],
         )
 
@@ -1379,7 +1379,7 @@ class MemoryConversationNormalizationTests(unittest.TestCase):
         bridge.token = "test-token"
         progress = []
         result = bridge.ingest_memory_conversation(
-            "wechat_personal", "wxid_progress",
+            "douyin#shop_a", "wxid_progress",
             [{"key": str(i), "role": "user", "content": f"消息 {i}", "timestamp": i}
              for i in range(85)],
             on_progress=lambda done, total, stage: progress.append((done, total, stage)),
@@ -1399,7 +1399,7 @@ class MemoryConversationNormalizationTests(unittest.TestCase):
         ).MemoryConversationPage(_WorkbenchBridge(), adapter=None)
         try:
             guide = page._memory_usage.text()
-            self.assertIn("真实微信对话", guide)
+            self.assertIn("真实抖音私信对话", guide)
             self.assertIn("语义召回", guide)
             self.assertIn("客服回复", guide)
             self.assertIn("非业务闲聊或情绪支持", guide)
@@ -1464,11 +1464,11 @@ class MemoryConversationNormalizationTests(unittest.TestCase):
         try:
             page._start = lambda callback, completed, _failed: (completed(callback()), True)[1]
             page._apply_contacts([{
-                "channel": "wechat_personal", "contact_id": "wxid_preview",
-                "display_name": "预览用户", "_bridge_key": "wechat_personal",
+                "channel": "douyin#shop_a", "contact_id": "wxid_preview",
+                "display_name": "预览用户", "_bridge_key": "douyin#shop_a",
             }])
 
-            self.assertEqual(("wechat_personal", "wxid_preview"), bridge.request)
+            self.assertEqual(("douyin#shop_a", "wxid_preview"), bridge.request)
             self.assertEqual(1, page._table.rowCount())
             self.assertEqual("喜欢深蓝色", page._table.item(0, 1).text())
             self.assertIn("已存长期记忆", page._status.text())
@@ -1534,8 +1534,8 @@ class MemoryConversationNormalizationTests(unittest.TestCase):
         try:
             page._start = fake_start
             page._apply_contacts([
-                {"channel": "wechat_personal", "contact_id": "wxid_a", "display_name": "A"},
-                {"channel": "wechat_personal", "contact_id": "wxid_b", "display_name": "B"},
+                {"channel": "douyin#shop_a", "contact_id": "wxid_a", "display_name": "A"},
+                {"channel": "douyin#shop_a", "contact_id": "wxid_b", "display_name": "B"},
             ])
             page._contacts_box.setCurrentIndex(1)
 
@@ -1741,7 +1741,7 @@ class MemoryGovernanceDeleteTests(unittest.TestCase):
         page = MemoryRecordsPage(bridge, governance=True)
         row = {
             "id": 42,
-            "channel": "wechat_personal",
+            "channel": "douyin#shop_a",
             "contact_id": "synthetic-contact",
             "memory_type": "preference",
             "content": "synthetic preference",
@@ -1802,12 +1802,12 @@ class MemoryGovernanceDeleteTests(unittest.TestCase):
         page = MemoryRecordsPage(bridge, governance=True)
         rows = [
             {
-                "id": 21, "channel": "wechat_personal", "contact_id": "friend-a",
+                "id": 21, "channel": "douyin#shop_a", "contact_id": "friend-a",
                 "memory_type": "preference", "content": "喜欢蓝色", "source": "mem0",
                 "importance": 0.5, "is_pinned": False,
             },
             {
-                "id": 22, "channel": "wechat_personal", "contact_id": "friend-b",
+                "id": 22, "channel": "douyin#shop_a", "contact_id": "friend-b",
                 "memory_type": "fact", "content": "养了一只小狗", "source": "mem0",
                 "importance": 0.6, "is_pinned": False,
             },
@@ -1879,8 +1879,8 @@ class MemoryGovernanceDeleteTests(unittest.TestCase):
         bridge = Bridge()
         page = MemoryRecordsPage(bridge, governance=True)
         decisions = [
-            {"id": 11, "channel": "wechat_personal", "contact_id": "friend-a", "event": "ADD"},
-            {"id": 12, "channel": "wechat_personal", "contact_id": "friend-a", "event": "UPDATE"},
+            {"id": 11, "channel": "douyin#shop_a", "contact_id": "friend-a", "event": "ADD"},
+            {"id": 12, "channel": "douyin#shop_a", "contact_id": "friend-a", "event": "UPDATE"},
         ]
         try:
             page._apply_decisions(decisions)

@@ -13,7 +13,7 @@ _SYSTEM = (
     "第一行是客户的核心问题，接着给出标准答法。简洁、去掉寒暄与客户个人信息。"
 )
 
-# 企微本地库历史反哺用：收割出的是**无角色标注、客户与客服混在一起**的一批消息片段，
+# 渠道历史反哺用：输入可能是**无角色标注、客户与客服混在一起**的一批消息片段，
 # 不是结构化对话，故用另一套提示词让 LLM 从中挑出业务问答、丢噪声。
 _HISTORY_SYSTEM = (
     "你是客服知识库整理助手。下面是从客服聊天记录里收割的一批消息片段（客户与客服混在一起、无角色标注、可能有系统提示）。"
@@ -82,8 +82,8 @@ def summarize_conversation_to_kb(db: Session, llm: LLM, *, tenant_id: int, chann
 
 
 def summarize_texts_to_kb(db: Session, llm: LLM, *, tenant_id: int,
-                          texts: list[str], title: str = "企微本地历史反哺") -> KbDocument:
-    """把企微本地库收割出的一批历史消息文本提炼成 FAQ 反哺知识库。
+                          texts: list[str], title: str = "渠道历史反哺") -> KbDocument:
+    """把渠道历史消息文本提炼成 FAQ 反哺知识库。
 
     与 summarize_conversation_to_kb 的区别：输入是**无角色、去重后的裸文本列表**（来自
     col_hook 被动收割的 message.db 解密明文，含连接前历史 + 人工手打），不是结构化 Conversation。

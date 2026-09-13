@@ -1,15 +1,10 @@
 # Customer widget config. Copy this file to widget_config.yaml before running.
 backend_base_url: http://127.0.0.1:8000
-hook_base_url: http://127.0.0.1:30001
-
 tenant_id: 1
 login: demo
 password: demo12345
 
-# Must be the wxid of the logged-in WeChat account. Do not rely on GetSelfProfile.
-self_wxid: ""
-
-# For first dry run, set false. Set true after confirming the reply behavior.
+# Keep false until the personal Douyin account and private-message reply are live-verified.
 auto_send: false
 
 poll_interval_s: 0.75
@@ -28,8 +23,8 @@ notifications:
 
 scope:
   allow_private: true
-  # 企业客服推荐 selected：只处理会话页里明确勾选的客户；all 才处理所有私聊。
-  private_mode: selected
+  # all：处理账号收到的全部私信；selected：只处理会话页明确勾选的用户。
+  private_mode: all
   allow_group: false
   group_trigger: at_me
   group_whitelist: []

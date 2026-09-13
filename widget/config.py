@@ -7,14 +7,14 @@ import yaml
 @dataclass
 class ScopeConfig:
     allow_private: bool = True
-    private_mode: str = "selected"          # all | selected（仅接待会话白名单，默认最小采集）
-    allow_group: bool = True
+    private_mode: str = "selected"          # all | selected（仅接待会话白名单）
+    allow_group: bool = False                # 当前个人抖音接入仅处理一对一私信
     group_trigger: str = "at_me"          # all | at_me | whitelist
     group_whitelist: list[str] = field(default_factory=list)
     group_blocklist: list[str] = field(default_factory=list)
     contact_blocklist: list[str] = field(default_factory=list)
     contact_allowlist: list[str] = field(default_factory=list)
-    # 精确到渠道的会话黑名单，值形如 "wechat_personal|wxid_xxx"。
+    # 精确到抖音渠道的会话黑名单，值形如 "douyin#shop_a|user_id"。
     # GUI 的「接待此客户」开关写这里；命中后不调后端、不留后台记录、不弹通知。
     conversation_blocklist: list[str] = field(default_factory=list)
     conversation_allowlist: list[str] = field(default_factory=list)
@@ -42,13 +42,10 @@ class BroadcastConfig:
 @dataclass
 class WidgetConfig:
     backend_base_url: str = "http://127.0.0.1:8000"
-    hook_base_url: str = "http://127.0.0.1:30001"
     tenant_id: int = 0
     login: str = ""
     password: str = ""                    # 明文（宜改用 password_enc）
     password_enc: str = ""                # DPAPI 加密密码（优先，见 widget/secret.py）
-    self_wxid: str = ""                    # 手动指定本账号 wxid；填了就不信 hook 的 GetSelfProfile
-                                          # （实测 4.1.10.27 该接口会乱报好友 wxid，导致自问自答死循环）
     auto_send: bool = False
     poll_interval_s: float = 0.75
     send_delay_min_s: float = 1.5

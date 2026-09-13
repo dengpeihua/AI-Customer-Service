@@ -23,27 +23,24 @@ class BotConfigCleanupTests(unittest.TestCase):
     def test_agent_routing_rejects_fake_and_missing_provider_keys(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "fake"):
             validate_agent_routing_config(Settings(llm_provider="fake"))
-        with self.assertRaisesRegex(RuntimeError, "dashscope_api_key"):
+        with self.assertRaisesRegex(RuntimeError, "minimax_api_key"):
             validate_agent_routing_config(Settings(
-                llm_provider="dashscope",
-                dashscope_api_key="",
+                llm_provider="deepseek",
+                deepseek_api_key="chat-key",
+                minimax_api_key="",
             ))
         with self.assertRaisesRegex(RuntimeError, "deepseek_api_key"):
             validate_agent_routing_config(Settings(
                 llm_provider="deepseek",
                 deepseek_api_key="",
-                dashscope_api_key="embedding-key",
+                minimax_api_key="embedding-key",
             ))
 
     def test_agent_routing_accepts_supported_configurations(self) -> None:
         validate_agent_routing_config(Settings(
-            llm_provider="dashscope",
-            dashscope_api_key="chat-and-embedding-key",
-        ))
-        validate_agent_routing_config(Settings(
             llm_provider="deepseek",
             deepseek_api_key="chat-key",
-            dashscope_api_key="embedding-key",
+            minimax_api_key="embedding-key",
         ))
 
 

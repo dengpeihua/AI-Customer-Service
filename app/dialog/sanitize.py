@@ -31,7 +31,7 @@ _SPACES_RE = re.compile(r"[ \t　]{2,}")
 
 
 def humanize(text: str, *, polite_you: bool = False) -> str:
-    """把模型输出改造成"像真人在微信打字"的样子。
+    """把模型输出改造成"像真人在抖音私信打字"的样子。
 
     polite_you=True（formal 档）保留「您」；其余档位统一成「你」，
     因为 casual/warm 的人设不会对客户说敬语，混用反而露馅。
@@ -47,5 +47,5 @@ def humanize(text: str, *, polite_you: bool = False) -> str:
     if not polite_you:
         out = out.replace("您好", "你好").replace("您", "你")
     out = _SPACES_RE.sub(" ", out).strip()
-    out = re.sub(r"[。\s]+$", "", out)        # 去句尾句号（微信里真人很少打）
+    out = re.sub(r"[。\s]+$", "", out)        # 去句尾句号（抖音私信里真人很少打）
     return out.strip()

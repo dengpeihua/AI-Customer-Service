@@ -17,18 +17,18 @@ class DeepSeekLLMTests(unittest.TestCase):
                 "deepseek_api_base",
                 "deepseek_model",
                 "deepseek_thinking",
-                "dashscope_api_key",
-                "dashscope_base_url",
-                "llm_embed_model",
+                "minimax_api_key",
+                "minimax_embedding_base_url",
+                "minimax_embed_model",
             )
         }
         settings.deepseek_api_key = "test-deepseek-key"
-        settings.deepseek_api_base = "https://api.deepseek.test"
+        settings.deepseek_api_base = "https://api.deepseek.com"
         settings.deepseek_model = "deepseek-v4-flash"
         settings.deepseek_thinking = False
-        settings.dashscope_api_key = "test-embed-key"
-        settings.dashscope_base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-        settings.llm_embed_model = "text-embedding-v3"
+        settings.minimax_api_key = "test-embed-key"
+        settings.minimax_embedding_base_url = "https://api.minimaxi.com/v1"
+        settings.minimax_embed_model = "embo-01"
 
     def tearDown(self):
         for name, value in self.previous.items():
@@ -36,8 +36,8 @@ class DeepSeekLLMTests(unittest.TestCase):
 
     @patch("app.llm.deepseek.DefaultHttpxClient", return_value=Mock())
     @patch("app.llm.deepseek.OpenAI")
-    @patch("app.llm.deepseek.DashScopeEmbeddingClient")
-    def test_routes_chat_to_deepseek_and_embeddings_to_dashscope(
+    @patch("app.llm.deepseek.MiniMaxEmbeddingClient")
+    def test_routes_chat_to_deepseek_and_embeddings_to_minimax(
         self, embedding_client_cls, openai, _http
     ):
         chat_client = Mock()
@@ -60,15 +60,15 @@ class DeepSeekLLMTests(unittest.TestCase):
             chat_client.chat.completions.create.call_args.kwargs["extra_body"],
         )
         embed_client.embed.assert_called_once_with(["a", "b"], input_type="query")
-        self.assertEqual("https://api.deepseek.test", openai.call_args.kwargs["base_url"])
+        self.assertEqual("https://api.deepseek.com", openai.call_args.kwargs["base_url"])
 
     def test_requires_both_chat_and_embedding_keys(self):
         settings.deepseek_api_key = ""
         with self.assertRaisesRegex(ValueError, "DEEPSEEK_API_KEY"):
             DeepSeekLLM()
         settings.deepseek_api_key = "present"
-        settings.dashscope_api_key = ""
-        with self.assertRaisesRegex(ValueError, "DASHSCOPE_API_KEY"):
+        settings.minimax_api_key = ""
+        with self.assertRaisesRegex(ValueError, "MINIMAX_API_KEY"):
             DeepSeekLLM()
 
 

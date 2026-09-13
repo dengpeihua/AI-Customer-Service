@@ -7,8 +7,8 @@ from typing import Any
 from sqlalchemy import delete, desc, func, select
 from sqlalchemy.orm import Session
 
-from app.config import settings
-from app.llm import EMBED_DIM, embedding_model_name
+from app.config import secret_is_configured, settings
+from app.llm import EMBED_DIM, chat_model_name, embedding_model_name
 from app.models.conversation import Conversation, Message
 from app.models.deal import Deal
 from app.models.knowledge import KbChunk, KbDocument
@@ -23,11 +23,16 @@ def _iso(value: Any) -> str | None:
 
 def _model_gateway() -> dict[str, Any]:
     provider = settings.llm_provider
-    chat_model = settings.deepseek_model if provider == "deepseek" else settings.llm_chat_model
+    chat_model = chat_model_name()
     configured = (
         provider == "fake"
-        or (provider == "dashscope" and bool(settings.dashscope_api_key))
-        or (provider == "deepseek" and bool(settings.deepseek_api_key and settings.dashscope_api_key))
+        or (provider == "minimax" and secret_is_configured(settings.minimax_api_key))
+        or (provider == "glm" and secret_is_configured(settings.glm_api_key))
+        or (
+            provider == "deepseek"
+            and secret_is_configured(settings.deepseek_api_key)
+            and secret_is_configured(settings.minimax_api_key)
+        )
     )
     return {
         "provider": provider,

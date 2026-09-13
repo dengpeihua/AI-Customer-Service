@@ -14,7 +14,8 @@ class HealthTests(unittest.TestCase):
         self.assertIn(f"provider={settings.llm_provider}", result["llm"])
         for credential in (
             settings.deepseek_api_key,
-            settings.dashscope_api_key,
+            settings.minimax_api_key,
+            settings.glm_api_key,
         ):
             if credential:
                 self.assertNotIn(credential, result["llm"])

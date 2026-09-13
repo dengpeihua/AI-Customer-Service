@@ -64,7 +64,7 @@ class Pipeline:
             except (BridgeError, TypeError, ValueError):
                 if retry == 0:
                     continue
-                # 微信投递结果是真相；回执 API 暂时失败不能改变已发生的发送，也不能中断待人工兜底。
+                # 抖音私信投递结果是真相；回执 API 暂时失败不能改变已发生的发送，也不能中断待人工兜底。
                 result["delivery_tracking_error"] = True
                 return False
 
@@ -99,7 +99,95 @@ class Pipeline:
         checker = getattr(self.sender, "was_delivered_since", None)
         return bool(checker and checker(contact_id, text, since_ts))
 
+    def _reconcile_delivery(self, contact_id: str, text: str, since_ts: int) -> str:
+        checker = getattr(self.sender, "reconcile_delivery", None)
+        if checker is not None:
+            return str(checker(contact_id, text, since_ts))
+        return "delivered" if self._was_already_delivered(contact_id, text, since_ts) else "not_delivered"
+
+    def _delivery_waiting(self, msg: InboundMsg, result: dict) -> str:
+        result["pending_kind"] = "delivery_waiting"
+        result["reconciliation_update"] = True
+        self._on_pending(msg, result)
+        return "delivery_waiting"
+
+    def _finish_recovered_delivery(self, msg: InboundMsg, result: dict) -> str:
+        action = str(result.get("action") or "")
+        if action == "handoff":
+            result["record_action"] = "handoff_notified"
+            self._mark_delivery(result, "delivered")
+            self._on_pending(msg, result)
+            return "handoff"
+        if action == "duplicate":
+            result["reconciliation_only"] = True
+        else:
+            self._mark_delivery(result, "delivered")
+        self._on_auto(msg, result)
+        return "auto_reply"
+
+    def _resume_delivery(self, msg: InboundMsg) -> str:
+        """Finish a prior unknown side effect before applying current intake policy."""
+        contact = msg["contact_id"]
+        try:
+            result = self._request_answer(msg, self._conv.get(contact))
+        except BridgeError:
+            return self._delivery_waiting(msg, {
+                "action": "handoff", "reply_text": "", "delivery_status": "sending",
+            })
+        conversation_id = result.get("conversation_id")
+        if conversation_id is not None:
+            self._conv[contact] = conversation_id
+        if result.get("action") == "duplicate" and result.get("delivery_status") == "delivered":
+            return self._finish_recovered_delivery(msg, result)
+        reply_text = str(result.get("reply_text") or "")
+        if not result.get("outbound_message_id") or not reply_text:
+            return self._delivery_waiting(msg, result)
+        if not self._mark_delivery(result, "sending"):
+            if result.get("delivery_status") == "delivered":
+                return self._finish_recovered_delivery(msg, result)
+            if result.get("delivery_status") == "sending":
+                return self._delivery_waiting(msg, result)
+            self._on_pending(msg, result)
+            return "handoff"
+        if result.get("recovered_expired_lease"):
+            reconciliation = self._reconcile_delivery(
+                contact, reply_text, int(msg.get("timestamp") or 0),
+            )
+            if reconciliation == "delivered":
+                return self._finish_recovered_delivery(msg, result)
+            if reconciliation != "not_delivered":
+                return self._delivery_waiting(msg, result)
+
+        action = str(result.get("action") or "handoff")
+        scope_allowed = should_handle(msg, self.cfg.scope)
+        ai_allowed = bool(self._is_ai_enabled())
+        send_allowed = bool(self.cfg.auto_send and scope_allowed and ai_allowed)
+        if action == "handoff":
+            send_allowed = bool(send_allowed and self.cfg.handoff_reply)
+        if not send_allowed:
+            self._mark_delivery(result, "failed")
+            if action == "auto_reply" and not self.cfg.auto_send:
+                result["pending_kind"] = "auto_reply_draft"
+                result["record_action"] = "auto_reply_draft"
+                self._mark_delivery(result, "draft")
+                self._on_pending(msg, result)
+                return "auto_reply_draft"
+            self._on_pending(msg, result)
+            return "handoff"
+        if self.sender.deliver(contact, reply_text):
+            return self._finish_recovered_delivery(msg, result)
+        if bool(getattr(getattr(self.sender, "last_result", None), "uncertain", False)):
+            result["delivery_uncertain"] = True
+            result["pending_kind"] = "delivery_uncertain"
+            self._on_pending(msg, result)
+            return "delivery_uncertain"
+        self._mark_delivery(result, "failed")
+        self._on_pending(msg, result)
+        return "handoff"
+
     def handle(self, msg: InboundMsg) -> str:
+        if msg.get("delivery_replay"):
+            return self._resume_delivery(msg)
         if not self.inbound.accept(msg, self.self_wxid):
             return "ignored"
         if not should_handle(msg, self.cfg.scope):
@@ -132,18 +220,43 @@ class Pipeline:
                 self._on_pending(msg, result)
                 return "auto_reply_draft"
             if reply_text and self._mark_delivery(result, "sending"):
-                if result.get("recovered_expired_lease") and self._was_already_delivered(
-                    contact, reply_text, int(msg.get("timestamp") or 0),
-                ):
-                    self._mark_delivery(result, "delivered")
-                    self._on_auto(msg, result)
-                    return "auto_reply"
+                if result.get("recovered_expired_lease"):
+                    reconciliation = self._reconcile_delivery(
+                        contact, reply_text, int(msg.get("timestamp") or 0),
+                    )
+                    if reconciliation == "delivered":
+                        self._mark_delivery(result, "delivered")
+                        self._on_auto(msg, result)
+                        return "auto_reply"
+                    if reconciliation != "not_delivered":
+                        return self._delivery_waiting(msg, result)
                 if self.sender.deliver(contact, reply_text):
                     self._mark_delivery(result, "delivered")
                     self._on_auto(msg, result)
                     return "auto_reply"
-                self._mark_delivery(result, "failed")
+                if bool(getattr(getattr(self.sender, "last_result", None), "uncertain", False)):
+                    # The browser may time out waiting for its first bubble snapshot even
+                    # though Douyin has already accepted and rendered the message. Reconcile
+                    # once immediately against verified history so a successfully delivered
+                    # AI reply never appears in the human-handoff queue for five minutes.
+                    reconciliation = self._reconcile_delivery(
+                        contact, str(reply_text), int(msg.get("timestamp") or 0),
+                    )
+                    if reconciliation == "delivered" and self._mark_delivery(
+                        result, "delivered",
+                    ):
+                        result["reconciled_immediately"] = True
+                        self._on_auto(msg, result)
+                        return "auto_reply"
+                    result["delivery_uncertain"] = True
+                    result["pending_kind"] = "delivery_uncertain"
+                    self._on_pending(msg, result)
+                    return "delivery_uncertain"
+                else:
+                    self._mark_delivery(result, "failed")
             elif reply_text:
+                if result.get("delivery_status") == "sending":
+                    return self._delivery_waiting(msg, result)
                 return "ignored"
             # 该回但没发出去（关自动发/限速/发送失败）：转待人工，暂时性、不锁定
             self._on_pending(msg, result)
@@ -153,22 +266,43 @@ class Pipeline:
             # 转人工提示也服从自动发送总闸；无论提示是否发出，原问题都继续留在待人工列表。
             result = dict(result)
             result["reply_text"] = self.cfg.handoff_reply
+            delivery_attempted = False
+            delivered = False
             if (self.cfg.auto_send and self.cfg.handoff_reply
-                    and self._mark_delivery(result, "sending")
-                    and (
-                        result.get("recovered_expired_lease")
-                        and self._was_already_delivered(
-                            contact, self.cfg.handoff_reply,
-                            int(msg.get("timestamp") or 0),
-                        )
-                        or self.sender.deliver(contact, self.cfg.handoff_reply)
-                    )):
+                    and self._mark_delivery(result, "sending")):
+                delivery_attempted = True
+                if result.get("recovered_expired_lease"):
+                    reconciliation = self._reconcile_delivery(
+                        contact, self.cfg.handoff_reply,
+                        int(msg.get("timestamp") or 0),
+                    )
+                    if reconciliation == "delivered":
+                        delivered = True
+                    elif reconciliation != "not_delivered":
+                        return self._delivery_waiting(msg, result)
+                if not delivered:
+                    delivered = self.sender.deliver(contact, self.cfg.handoff_reply)
+            elif (
+                self.cfg.auto_send
+                and self.cfg.handoff_reply
+                and result.get("delivery_status") == "sending"
+            ):
+                return self._delivery_waiting(msg, result)
+            if delivered:
                 result["record_action"] = "handoff_notified"
                 self._mark_delivery(result, "delivered")
             else:
-                if result.get("delivery_status") == "sending":
+                uncertain = bool(
+                    getattr(getattr(self.sender, "last_result", None), "uncertain", False)
+                )
+                if uncertain and delivery_attempted:
+                    result["delivery_uncertain"] = True
+                    result["pending_kind"] = "delivery_uncertain"
+                elif result.get("delivery_status") == "sending":
                     self._mark_delivery(result, "failed")
                 elif not self.cfg.auto_send:
                     self._mark_delivery(result, "draft")
         self._on_pending(msg, result)
+        if result.get("delivery_uncertain"):
+            return "delivery_uncertain"
         return "handoff"

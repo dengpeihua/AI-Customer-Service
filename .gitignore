@@ -6,7 +6,9 @@
 **/.env.*
 !**/.env.example
 widget_config.yaml
-wecom_hook_config.yaml
+*_accounts.yaml
+!*.example.yaml
+data/
 
 # Private keys, certificates containing private material, and credential exports
 *.key
@@ -36,8 +38,9 @@ secrets/
 *.sqlite3
 *.bak
 *.backup
+backups/
+*.log
 broadcast_tasks.json
-wecom_conversations.json
 widget_cursor.json
 logs/
 **/logs/

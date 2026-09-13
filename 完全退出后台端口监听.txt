@@ -2,4 +2,4 @@
 ```powershell
 $root='C:\Users\16332\Desktop\AI-Customer-Service'; Get-CimInstance Win32_Process | Where-Object { $cmd=[string]$_.CommandLine; $exe=[string]$_.ExecutablePath; ($cmd -match 'run_(backend|mem0|widget)\.py') -and (($cmd.IndexOf($root,[StringComparison]::OrdinalIgnoreCase) -ge 0) -or ($exe.IndexOf($root,[StringComparison]::OrdinalIgnoreCase) -ge 0)) } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 ```
-这会关闭 AI 客服工作台、后端和 Mem0，但不会退出微信或企业微信。
+这会关闭 AI 客服工作台、后端和 Mem0。正常从托盘退出时，每个账号的 Playwright Chrome 也会关闭；若程序曾异常崩溃，可再从任务管理器关闭对应的残留 Chrome。
