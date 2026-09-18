@@ -3,13 +3,14 @@
 密文仅能在**同一台机器、同一 Windows 用户**下解开，写进 widget_config.yaml 的 `password_enc` 字段，
 避免明文密码随配置文件被同步/备份/误读泄露。纯 ctypes 调 crypt32，无额外依赖。
 
-给密码加密（把结果填进 widget_config.yaml 的 password_enc，并删掉明文 password）：
-    .venv\\Scripts\\python.exe -m widget.secret 你的密码
+给密码加密（隐藏输入；把结果填进 widget_config.yaml 的 password_enc，并删掉明文 password）：
+    .venv\\Scripts\\python.exe -m widget.secret
 """
 from __future__ import annotations
 
 import base64
 import ctypes
+from getpass import getpass
 import sys
 from ctypes import wintypes
 
@@ -66,13 +67,16 @@ def resolve_password(cfg) -> str:
 
 
 def main() -> None:
-    if len(sys.argv) < 2:
-        print("用法: python -m widget.secret <要加密的密码>")
-        return
-    enc = encrypt(sys.argv[1])
+    if len(sys.argv) > 1:
+        print("请勿把密码写在命令行中；直接运行 python -m widget.secret。", file=sys.stderr)
+        raise SystemExit(2)
+    plaintext = getpass("后端登录密码（隐藏输入）: ")
+    if not plaintext:
+        print("密码不能为空。", file=sys.stderr)
+        raise SystemExit(2)
+    enc = encrypt(plaintext)
     print("已加密。请在 widget_config.yaml 里这样填（并删除明文 password 行）：\n")
     print(f"password_enc: {enc}")
-    print("\n（校验解密）:", decrypt(enc))
 
 
 if __name__ == "__main__":

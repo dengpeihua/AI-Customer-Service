@@ -9,7 +9,7 @@ description = "Long-term memory for AI Agents"
 authors = [
     { name = "Mem0", email = "support@mem0.ai" }
 ]
-readme = "README.md"
+readme = { text = "Bundled Mem0 OSS component for AI Customer Service.", content-type = "text/markdown" }
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.10,<4.0"

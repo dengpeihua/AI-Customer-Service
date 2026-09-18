@@ -48,6 +48,7 @@ def test_runtime_prompts_survive_markdown_cleanup() -> None:
 def test_project_owned_markdown_is_consolidated() -> None:
     excluded_roots = {
         (ROOT / "runtime").resolve(),
+        (ROOT / ".venv").resolve(),
         (ROOT / "mem" / ".python").resolve(),
         (ROOT / "mem" / ".venv").resolve(),
     }

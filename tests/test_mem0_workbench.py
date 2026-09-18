@@ -26,7 +26,7 @@ class _LiveMem0:
 
 
 class Mem0WorkbenchTests(unittest.TestCase):
-    def test_project_locomo_payload_has_real_sessions_questions_and_snapshots(self) -> None:
+    def test_project_locomo_payload_has_sessions_questions_and_optional_snapshots(self) -> None:
         repository = LoCoMoRepository.from_project()
         payload = repository.workbench(0, 1, 0, 8)
 
@@ -35,7 +35,12 @@ class Mem0WorkbenchTests(unittest.TestCase):
         self.assertGreater(len(payload["messages"]), 10)
         self.assertGreater(len(payload["questions"]), 100)
         self.assertGreater(payload["stats"]["events"], len(payload["messages"]))
-        self.assertEqual(8, len(payload["preview_results"]))
+        self.assertLessEqual(len(payload["preview_results"]), 8)
+        if repository.snapshot(0, 0):
+            self.assertEqual(8, len(payload["preview_results"]))
+        else:
+            self.assertEqual([], payload["preview_results"])
+        self.assertTrue(payload["mem0_user_id"])
         self.assertTrue(payload["mem0_user_id"].startswith("locomo_0_"))
 
     def test_recall_uses_live_mem0_search_and_reports_engine(self) -> None:

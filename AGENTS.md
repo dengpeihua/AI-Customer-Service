@@ -14,13 +14,14 @@
 Run commands from the repository root in PowerShell:
 
 ```powershell
-& .\runtime\python\python.exe -m pytest .\tests -q
-& .\runtime\python\python.exe .\scripts\run_backend.py
-& .\runtime\python\python.exe .\run_widget.py
+& .\scripts\Setup-AICustomerService.ps1
+& .\.venv\Scripts\python.exe -m pytest .\tests -q
+& .\.venv\Scripts\python.exe .\scripts\run_backend.py
+& .\.venv\Scripts\python.exe .\run_widget.py
 & .\scripts\Start-AICustomerService.ps1
 ```
 
-The first command runs the root regression suite. For separate development, start the backend before the desktop UI and verify `http://127.0.0.1:8000/health`; the PowerShell launcher starts the integrated stack and applies migrations. To preview a read-only knowledge-base import, run `& .\runtime\python\python.exe .\scripts\import_kb_dataset.py --dataset .\dataset`; add `--apply` only after review and backup.
+The setup command rebuilds the ignored source environment after a GitHub clone. Bundled deliveries may use `runtime\python\python.exe` instead; the integrated launcher resolves either layout. The test command runs the root regression suite. For separate development, start the backend before the desktop UI and verify `http://127.0.0.1:8000/health`; the PowerShell launcher starts the integrated stack and applies migrations. To preview a read-only knowledge-base import, run `& .\.venv\Scripts\python.exe .\scripts\import_kb_dataset.py --dataset .\dataset`; add `--apply` only after review and backup.
 
 ## Coding Style & Naming Conventions
 

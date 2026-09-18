@@ -64,13 +64,10 @@ class MemDirectoryLayoutTests(unittest.TestCase):
             Path(completed.stdout.strip()).resolve(),
         )
 
-    def test_embedded_environment_points_at_moved_data_directory(self) -> None:
-        data_line = next(
-            line for line in (self.outer / ".env").read_text(encoding="utf-8").splitlines()
-            if line.startswith("MEM0_DATA_DIR=")
-        )
-        normalized = data_line.split("=", 1)[1].replace("\\", "/")
-        self.assertTrue(normalized.endswith("/AI-Customer-Service/mem/data"))
+    def test_runner_points_at_checkout_local_data_directory(self) -> None:
+        runner = (self.root / "scripts" / "run_mem0.py").read_text(encoding="utf-8")
+
+        self.assertIn('os.environ["MEM0_DATA_DIR"] = str(MEM0_ROOT / "data")', runner)
 
 
 if __name__ == "__main__":

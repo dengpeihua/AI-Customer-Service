@@ -4,7 +4,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 $root = (Resolve-Path -LiteralPath $ProjectRoot).Path
-$python = (Resolve-Path -LiteralPath (Join-Path $root "runtime\python\python.exe")).Path
+. (Join-Path $PSScriptRoot "Runtime.ps1")
+$python = Resolve-AcsPython -ProjectRoot $root
 $runner = (Resolve-Path -LiteralPath (Join-Path $root "scripts\run_backend.py")).Path
 $logs = Join-Path $root "logs"
 New-Item -ItemType Directory -Force -Path $logs | Out-Null

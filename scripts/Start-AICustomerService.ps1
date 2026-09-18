@@ -1,8 +1,9 @@
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Root = (Resolve-Path -LiteralPath (Join-Path $ScriptDir "..")).Path
-$Python = Join-Path $Root "runtime\python\python.exe"
-$Pythonw = Join-Path $Root "runtime\python\pythonw.exe"
+. (Join-Path $ScriptDir "Runtime.ps1")
+$Python = Resolve-AcsPython -ProjectRoot $Root
+$Pythonw = Resolve-AcsPython -ProjectRoot $Root -Windowless
 $MemPython = Join-Path $Root "mem\.venv\Scripts\python.exe"
 $LogDir = Join-Path $Root "logs"
 $createdLauncherMutex = $false

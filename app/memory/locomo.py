@@ -81,7 +81,10 @@ class LoCoMoRepository:
         snapshot = self.snapshot(case_index, question_index) or {}
         if snapshot.get("user_id"):
             return str(snapshot["user_id"])
-        raise RuntimeError(f"LoCoMo 案例 {case_index + 1} 没有可用的 Mem0 user_id")
+        # A GitHub source install intentionally starts without the ignored benchmark
+        # result directory. Keep the public dataset workbench usable with an empty,
+        # deterministic Mem0 scope until a real benchmark ingestion creates its own ID.
+        return f"locomo_{case_index}_source"
 
     def session_timestamp(self, case_index: int, session_index: int) -> int:
         session = next((item for item in self._sessions(self.case(case_index))

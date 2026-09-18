@@ -18,7 +18,8 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
     exit $elevated.ExitCode
 }
 
-$pythonw = (Resolve-Path -LiteralPath (Join-Path $root "runtime\python\pythonw.exe")).Path
+. (Join-Path $PSScriptRoot "Runtime.ps1")
+$pythonw = Resolve-AcsPython -ProjectRoot $root -Windowless
 $widgetEntry = (Resolve-Path -LiteralPath (Join-Path $root "run_widget.py")).Path
 $logs = Join-Path $root "logs"
 New-Item -ItemType Directory -Force -Path $logs | Out-Null

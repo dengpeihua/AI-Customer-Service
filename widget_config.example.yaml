@@ -1,8 +1,9 @@
 # Customer widget config. Copy this file to widget_config.yaml before running.
 backend_base_url: http://127.0.0.1:8000
 tenant_id: 1
-login: demo
-password: demo12345
+login: admin
+password: ""
+password_enc: ""
 
 # Keep false until the personal Douyin account and private-message reply are live-verified.
 auto_send: false

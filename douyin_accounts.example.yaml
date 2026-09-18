@@ -5,9 +5,9 @@ accounts:
     display_name: 抖音个人号 A
     tenant_id: 1
     login: admin
-    # 后端登录密码请用 `python -m widget.secret <密码>` 生成 DPAPI 密文。
+    # 后端登录密码请用 `python -m widget.secret` 隐藏输入并生成 DPAPI 密文。
     password_enc: ""
-    enabled: true
+    enabled: false
 
     # 首次启动会打开系统 Chrome；请在窗口里手工登录目标个人号。
     messages_url: https://www.douyin.com/
