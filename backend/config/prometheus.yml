@@ -1,0 +1,26 @@
+# 我们为智能客服系统维护的 Prometheus 配置
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'customer-service'
+    environment: 'production'
+
+rule_files:
+  - "alerts/*.yml"
+
+scrape_configs:
+  # 我们的主应用指标
+  - job_name: 'customer-service-app'
+    static_configs:
+      - targets: ['customer-service:8000']
+        labels:
+          service: 'customer-service'
+    scrape_interval: 10s
+    metrics_path: '/metrics'
+
+  # Prometheus 自监控
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
