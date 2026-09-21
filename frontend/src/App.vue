@@ -1,9 +1,9 @@
 <template>
   <main :class="['app-shell', `app-shell-${activeView}`]">
     <header class="topbar">
-      <a class="brand" href="#" aria-label="AI 客服首页" @click.prevent="activeView = 'chat'">
-        <img class="brand-mark" src="/assets/branding/ai-customer-service.svg" alt="" />
-        <span class="brand-name">AI 客服</span>
+      <a class="brand" href="#" aria-label="Salso 首页" @click.prevent="activeView = 'chat'">
+        <img class="brand-mark" src="/assets/branding/salso.svg" alt="" />
+        <span class="brand-name">Salso</span>
       </a>
 
       <nav class="view-nav" aria-label="工作区">

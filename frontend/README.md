@@ -1,4 +1,4 @@
-# 我们的 AI 客服前端
+# Salso 前端
 
 我们使用独立的 Vue 前端连接同级 `backend` 目录中的 Python 后端。
 
@@ -36,7 +36,7 @@ Docker Compose 模式下，网关将 `/api/python/` 转发到 Python 容器。�
 先启动 Docker Desktop，再在项目根目录启动 Python 后端及 Redis、ChromaDB：
 
 ```bash
-docker compose -f backend/docker-compose.yml up -d customer-service
+docker compose -f backend/docker-compose.yml up -d salso
 ```
 
 确认 `http://localhost:8000/health` 可访问后，进入 `frontend` 目录执行下面的命令。`npm run dev` 只启动前端；后端未启动时，Vite 会报告 `ECONNREFUSED`。

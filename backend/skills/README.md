@@ -1,6 +1,6 @@
 # 我们的 Skills 文档
 
-我们在启动时从 `CUSTOMER_SERVICE_SKILLS_DIR` 读取 Skills，并在匹配用户请求时将其注入对应 Agent 的 system prompt。我们用 Skills 维护业务处理规范、客服话术、技术排障 SOP、账单审核边界、升级规则和禁止事项。
+我们在启动时从 `SALSO_SKILLS_DIR` 读取 Skills，并在匹配用户请求时将其注入对应 Agent 的 system prompt。我们用 Skills 维护业务处理规范、客服话术、技术排障 SOP、账单审核边界、升级规则和禁止事项。
 
 当前内置三类 Skills：
 

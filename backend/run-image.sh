@@ -1,13 +1,13 @@
 #!/bin/bash
 
-# 我们的智能客服系统镜像运行脚本
+# Salso 镜像运行脚本
 # 提供多种运行配置选项
 
 set -e
 
 # 配置
-IMAGE_NAME="customer-service"
-CONTAINER_NAME="customer-service-app"
+IMAGE_NAME="salso"
+CONTAINER_NAME="salso-app"
 VERSION=${VERSION:-latest}
 REGISTRY=""  # 如果镜像在私有仓库，设置为 registry.example.com/
 
@@ -40,7 +40,7 @@ print_error() {
 
 show_help() {
     cat << EOF
-我们的智能客服系统 Docker 镜像运行工具
+Salso Docker 镜像运行工具
 
 用法: ./run-image.sh [命令] [选项]
 

@@ -1,5 +1,5 @@
 """
-我们开发的智能客服系统 — FastAPI 入口
+Salso — FastAPI 入口
 
 启动时打印服务状态横幅。
 所有核心组件在 lifespan 中初始化，通过环境变量配置。
@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 BANNER = r"""
    ╔══════════════════════════╗
-   ║ AI Customer Service v2.0 ║
+   ║        Salso v2.0        ║
    ║      智能客服系统        ║
    ╚══════════════════════════╝
 """
@@ -88,10 +88,10 @@ async def lifespan(app: FastAPI):
     )
 
     # Skills：启动时从目录加载业务能力说明，并在 Agent 调用 LLM 时动态注入。
-    skills_dir = os.getenv("CUSTOMER_SERVICE_SKILLS_DIR", str(pathlib.Path(_ROOT) / "skills"))
+    skills_dir = os.getenv("SALSO_SKILLS_DIR", str(pathlib.Path(_ROOT) / "skills"))
     _skill_manager = SkillManager(
         root_dir=skills_dir,
-        max_prompt_chars=int(os.getenv("CUSTOMER_SERVICE_SKILLS_MAX_PROMPT_CHARS", "5000")),
+        max_prompt_chars=int(os.getenv("SALSO_SKILLS_MAX_PROMPT_CHARS", "5000")),
     )
     _skill_manager.load()
 
@@ -177,18 +177,18 @@ async def lifespan(app: FastAPI):
         baseline_path=os.getenv("EVAL_BASELINE_PATH", "/app/data/eval/baseline.json"),
     )
 
-    logger.info("我们的智能客服系统已就绪")
+    logger.info("Salso 已就绪")
     yield
 
     await _monitor.stop()
     if _memory is not None:
         await _memory.close()
-    logger.info("我们的智能客服系统已关闭")
+    logger.info("Salso 已关闭")
 
 
 # ── FastAPI ───────────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="我们的智能客服系统",
+    title="Salso",
     version="2.0.0",
     lifespan=lifespan,
     docs_url="/docs",
@@ -560,8 +560,8 @@ async def _cli():
 
     cfg = _anthropic_cfg()
     skill_manager = SkillManager(
-        root_dir=os.getenv("CUSTOMER_SERVICE_SKILLS_DIR", str(pathlib.Path(_ROOT) / "skills")),
-        max_prompt_chars=int(os.getenv("CUSTOMER_SERVICE_SKILLS_MAX_PROMPT_CHARS", "5000")),
+        root_dir=os.getenv("SALSO_SKILLS_DIR", str(pathlib.Path(_ROOT) / "skills")),
+        max_prompt_chars=int(os.getenv("SALSO_SKILLS_MAX_PROMPT_CHARS", "5000")),
     )
     skill_manager.load()
     orch = AgentOrchestrator(

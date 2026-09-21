@@ -20,7 +20,7 @@ export function createInitialSettings() {
 }
 
 export function saveSettings(settings) {
-  localStorage.setItem('ai-customer-service.frontend.settings', JSON.stringify(settings))
+  localStorage.setItem('salso.frontend.settings', JSON.stringify(settings))
 }
 
 export function backendMeta(type, settings) {
@@ -169,7 +169,7 @@ function normalizeBaseUrl(value) {
 
 function readSettings() {
   try {
-    return JSON.parse(localStorage.getItem('ai-customer-service.frontend.settings') || '{}')
+    return JSON.parse(localStorage.getItem('salso.frontend.settings') || '{}')
   } catch {
     return {}
   }
@@ -177,5 +177,5 @@ function readSettings() {
 
 function runtimeConfig() {
   if (typeof window === 'undefined') return {}
-  return window.__AI_CUSTOMER_SERVICE_CONFIG__ || {}
+  return window.__SALSO_CONFIG__ || {}
 }

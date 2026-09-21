@@ -1,4 +1,4 @@
-# 我们的智能客服后端
+# Salso 后端
 
 我们用 FastAPI 构建了一个可部署、可观测、可评测的多 Agent 智能客服后端。系统先识别用户意图和紧急程度，再把请求路由到通用、技术、账单或人工转接节点；处理过程中可以调用知识库检索、业务 Skills、三级记忆和监控评测能力。
 
@@ -58,7 +58,7 @@ REDIS_PASSWORD=replace_with_a_strong_password
 | `ANTHROPIC_API_KEY` | 是 | 模型服务密钥。 |
 | `ANTHROPIC_BASE_URL` | 否 | Anthropic 官方接口可留空；兼容服务填写其基础地址。 |
 | `ANTHROPIC_MODEL` | 是 | 必须填写当前服务实际支持的模型名。 |
-| `REDIS_PASSWORD` | 否 | Docker 环境默认使用 `customer-service123`。生产环境应修改。 |
+| `REDIS_PASSWORD` | 否 | Docker 环境默认使用 `salso123`。生产环境应修改。 |
 | `LOG_LEVEL` | 否 | 日志级别，默认 `INFO`。 |
 | `MONITOR_INTERVAL` | 否 | 性能监控采样间隔，默认 10 秒。 |
 | `ALERT_WEBHOOK_URL` | 否 | 异常告警 Webhook；留空则不发送。 |
@@ -101,7 +101,7 @@ docker compose ps
 查看日志和停止服务：
 
 ```powershell
-docker compose logs -f customer-service
+docker compose logs -f salso
 docker compose down
 ```
 
@@ -182,5 +182,5 @@ backend/
 - 模型返回 401 或模型不存在：核对 API Key、`ANTHROPIC_BASE_URL` 和 `ANTHROPIC_MODEL` 是否属于同一服务。
 - MiniMax 等推理型兼容模型会先消耗 thinking token；意图识别和 LLM Judge 的结构化调用已预留 1024 个输出 token，避免 256 token 只返回 thinking、没有最终 JSON。该值是上限，不代表每次都会消耗满额。
 - 8000、8001、9090 或 80 端口被占用：先停止占用端口的服务，或修改 `docker-compose.yml` 的宿主机端口。
-- Docker 服务一直不健康：运行 `docker compose ps` 和 `docker compose logs -f customer-service` 查看具体错误。
+- Docker 服务一直不健康：运行 `docker compose ps` 和 `docker compose logs -f salso` 查看具体错误。
 - 本地开发无法连接 Redis 或 ChromaDB：确认依赖容器已启动，并使用宿主机地址 `localhost:6379` 和 `localhost:8001`。

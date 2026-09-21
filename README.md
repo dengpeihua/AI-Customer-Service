@@ -1,6 +1,8 @@
-# 我们的 AI 客服多 Agent 系统
+# Salso：多 Agent 智能客服系统
 
-这是我们维护的智能客服项目，包含 FastAPI 多 Agent 后端和 Vue 3 网页前端。我们把意图识别、领域 Agent、Skills、工具调用、RAG、三级记忆、监控和评测串成了一条可运行的业务链路。
+Salso 是一套智能客服系统，包含 FastAPI 多 Agent 后端和 Vue 3 网页前端。我们把意图识别、领域 Agent、Skills、工具调用、RAG、三级记忆、监控和评测串成了一条可运行的业务链路。
+
+项目地址：[dengpeihua/Salso](https://github.com/dengpeihua/Salso)。
 
 ## 项目组成
 
@@ -126,7 +128,7 @@ Invoke-RestMethod http://localhost:8000/health
 查看日志：
 
 ```powershell
-docker compose --env-file backend/.env -f frontend/docker-compose.yml logs -f customer-service-python
+docker compose --env-file backend/.env -f frontend/docker-compose.yml logs -f salso-python
 ```
 
 停止完整项目：
@@ -147,8 +149,10 @@ docker compose --env-file backend/.env -f frontend/docker-compose.yml down
 | 当前会话消息和会话摘要 | Redis 卷 `frontend_redis-data` | 默认 24 小时过期，删除数据卷后立即清空 |
 | 用户画像、情景记忆和知识库 | ChromaDB 卷 `frontend_chromadb-data` | 持久保存，删除数据卷后清空 |
 | 工具调用 trace、意图缓存、工具缓存和本轮评测历史 | Python 后端进程内存 | 重启或重建后端容器后清空 |
-| 最新评测基线 | `frontend_customer-service-python-data` 卷中的 `/app/data/eval/baseline.json` | 每次评测覆盖，删除数据卷后清空 |
+| 最新评测基线 | `frontend_salso-python-data` 卷中的 `/app/data/eval/baseline.json` | 每次评测覆盖，删除数据卷后清空 |
 | 页面聊天记录和评测展示 | 浏览器页面内存 | 刷新页面后清空 |
+
+从旧版本升级时，部分 Docker 资源名称和浏览器设置键会变化。已有部署应先备份 Redis、ChromaDB 和评测基线，再启动 Salso 并确认数据恢复；不要用 `down -v` 清理旧数据卷。
 
 页面中的“清空”按钮只会清除当前页面消息并生成新的会话 ID，不会删除 Redis、ChromaDB 或 Docker 日志。
 
@@ -240,7 +244,7 @@ Compose 配置检查只验证编排文件可以解析；只有实际启动并访
 
 - 后端提示缺少密钥：确认 `backend/.env` 存在且 `ANTHROPIC_API_KEY` 不是空值。
 - 模型接口报 401 或模型不存在：重新核对 API Key、基础地址和模型名是否来自同一服务。
-- 页面能打开但无法对话：先访问后端健康检查，再查看 `customer-service-python` 日志。
+- 页面能打开但无法对话：先访问后端健康检查，再查看 `salso-python` 日志。
 - Docker 报容器名或端口冲突：先停止另一套编排，再重新启动当前方案。
 - 首次构建较慢：后端镜像会安装依赖并预下载 ChromaDB 使用的 ONNX 模型。
 - 需要更细的接口、配置或故障排查说明：查看 [后端 README](backend/README.md) 和 [前端 README](frontend/README.md)。

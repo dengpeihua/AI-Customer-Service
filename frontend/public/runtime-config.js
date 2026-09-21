@@ -1,3 +1,3 @@
-window.__AI_CUSTOMER_SERVICE_CONFIG__ = {
+window.__SALSO_CONFIG__ = {
   pythonApiUrl: '/api/python'
 }

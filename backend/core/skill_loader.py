@@ -184,7 +184,7 @@ class SkillManager:
         """在控制台输出醒目的 Skill 加载结果，方便启动和热加载时确认生效状态。"""
         lines = [
             "",
-            "================ Customer Service Skills Loaded ================",
+            "================ Salso Skills Loaded ================",
             f"目录: {self.root_dir}",
             f"数量: {len(self._skills)}",
         ]
