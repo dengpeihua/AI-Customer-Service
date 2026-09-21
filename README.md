@@ -240,6 +240,63 @@ docker compose --env-file ../backend/.env config --quiet
 
 Compose 配置检查只验证编排文件可以解析；只有实际启动并访问健康检查或页面，才算完成运行时验证。
 
+### 运行 Agent 效果评测
+
+在项目根目录用 PowerShell 执行。评测会实际调用 `backend/.env` 配置的模型服务，需有可用的 API Key；首次启动还会初始化 Redis 和 ChromaDB。
+
+```powershell
+docker compose --env-file backend/.env -f frontend/docker-compose.yml up -d --build redis chromadb salso-python
+Invoke-RestMethod http://localhost:8000/health
+
+$report = Invoke-RestMethod -Method Post -Uri http://localhost:8000/eval/run -ContentType application/json -Body '{}' -TimeoutSec 600
+New-Item -ItemType Directory -Force backend/data/eval | Out-Null
+$report | ConvertTo-Json -Depth 30 | Set-Content backend/data/eval/manual-run.json -Encoding utf8
+$report | Select-Object total,passed,pass_rate,avg_scores,regressions,recommendations | Format-List
+$report.results | Select-Object test_id,passed,scores | Format-Table -Wrap
+$report.results | Where-Object { $_.metadata.judge_failed } | Select-Object test_id,metadata
+```
+
+如果 8000 端口正被别的服务使用，可在同一 Compose 网络中运行临时容器，不占用宿主机端口。先执行 `docker compose --env-file backend/.env -f frontend/docker-compose.yml up -d redis chromadb`，然后运行：
+
+```powershell
+docker compose --env-file backend/.env -f frontend/docker-compose.yml run -d --no-deps --name salso-eval salso-python
+docker inspect --format '{{.State.Health.Status}}' salso-eval  # 等待显示 healthy
+New-Item -ItemType Directory -Force backend/data/eval | Out-Null
+docker exec salso-eval python -c "import urllib.request; r=urllib.request.Request('http://localhost:8000/eval/run',data=b'{}',headers={'Content-Type':'application/json'},method='POST'); print(urllib.request.urlopen(r,timeout=600).read().decode())" | Set-Content backend/data/eval/manual-run.json -Encoding utf8
+$report = Get-Content backend/data/eval/manual-run.json -Raw | ConvertFrom-Json
+$report | Select-Object total,passed,pass_rate,avg_scores,regressions,recommendations | Format-List
+```
+
+完成后可运行 `docker stop salso-eval` 和 `docker rm salso-eval` 清理这个临时容器；评测报告已保存在本机文件中。
+
+默认用例为 **11 条意图识别样本**及 **5 组客服对话（共 7 轮）**。意图样本合并为报告中的一项 `intent_recognition`，其分数包括 Accuracy 和 Macro-F1；7 个对话轮次分别计入报告，通过 LLM-as-Judge 评分相关性、准确性、完整性和有用性。因此默认报告的 `total` 应为 8，`pass_rate` 是 8 项的通过比例，不是 11 条意图样本的准确率。每项通过阈值为 0.75。若任一对话结果的 `metadata.judge_failed` 为 `true`，本次 Judge 调用失败，该轮的 0.5 默认分不能当作有效质量评分。
+
+报告会保存到本机 `backend/data/eval/manual-run.json`（已被 Git 忽略）。服务还会在数据卷的 `/app/data/eval/baseline.json` 保存最新报告；再次运行时，与上一轮的同名平均指标比较，相对下降超过 5% 会列为 `regressions`。每次运行会覆盖该基线，想做严格的版本对比时应另行保存每次报告，并固定模型、知识库、用例及参数。
+
+可使用自定义用例：向 `/eval/run` 发送包含 `intent_cases`、`dialog_cases` 的 JSON；字段格式见 [后端接口](backend/api/main.py) 中的 `EvalRunInput`。这里的 Precision/Recall 是**意图分类**指标。当前项目没有带相关文档标注的检索评测集，也没有计算检索 Recall@5、MRR、NDCG 或 direct/hybrid/rewrite 对比的脚本；`/search` 可检查单次查询的改写检索结果，但不能据此声称检索效果提升。
+
+不调用外部模型的代码回归测试可在服务启动后单独运行，结果应与上述效果评测分开记录：
+
+```powershell
+docker compose --env-file backend/.env -f frontend/docker-compose.yml exec -T salso-python python tests/run_focused_tests.py
+```
+
+### 本次评测结果
+
+2026-09-21 在 Docker 容器中执行默认 `/eval/run`，使用 `backend/.env` 配置的 **MiniMax-M2.7**，知识库当时有 **6 个文档片段**。由于本机 8000 端口被另一个容器占用，本次将 `salso-python` 作为不发布端口的临时容器 `salso-eval` 运行，并从容器内部请求 `http://localhost:8000/eval/run`。原始 API 响应保存在本机忽略目录 `backend/data/eval/manual-run.json`，没有提交客服回复原文或密钥。
+
+| 项目 | 实测结果 |
+| --- | --- |
+| 意图识别 | 11 条中 9 条正确；Accuracy **0.8182**，Macro-F1 **0.7222** |
+| 客服对话 | 5 组、7 轮；LLM-as-Judge 四维均分：相关性 **0.9400**、准确性 **0.9714**、完整性 **0.9000**、有用性 **0.9214** |
+| 报告通过率 | **8/8 = 1.0000**（1 项汇总意图评测 + 7 个对话轮次；阈值 0.75） |
+| Judge 调用失败 | **0/7** |
+| 回归检测 | `regressions=[]`；这是新数据卷上的首轮评测，没有可比较的历史基线 |
+| 代码回归测试 | `python tests/run_focused_tests.py`：**30/30 通过**，与上述模型效果评测分开统计 |
+| 检索烟测 | `/search?query=退款多久到账？&top_k=5` 返回 5 条，第一条为“退款政策”，`reranked=true`；这只证明本次检索链路返回了结果 |
+
+两条意图错分：**“帮我取消订单”** 的标注为 `request`，预测为 `order_status`；**“我要投诉，转人工！”** 的标注为 `human_handoff`，预测为 `complaint`。7 个对话轮次的综合分依次为 **0.9000、0.9075、0.9375、0.8750、1.0000、0.9375、0.9750**。报告建议补充低 F1 意图类别的示例。`avg_scores.accuracy` 是 Judge 对回复准确性的主观评分，**不是**意图识别准确率，也未经过人工答案校准；本次没有检索相关性标注集，因而没有 Recall@5、MRR、NDCG 或策略提升数字。单次小样本结果不代表生产环境表现。
+
 ## 七、常见问题
 
 - 后端提示缺少密钥：确认 `backend/.env` 存在且 `ANTHROPIC_API_KEY` 不是空值。
